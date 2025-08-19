@@ -1,39 +1,269 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Graph-First Programming IDE</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
-      
-      #root {
-        height: 100vh;
-        width: 100vw;
-      }
-      
-      .loading {
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Graph-First Programming IDE - A comprehensive development environment for visual architecture design with automatic code generation and real-time validation.">
+    <meta name="keywords" content="graph-first-programming, architecture, ide, visual-programming, dependency-injection, ports-and-adapters, clean-architecture, react, typescript, d3">
+    <meta name="author" content="Graph-First Programming Community">
+    <meta name="theme-color" content="#667eea">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://graphfirst.dev/">
+    <meta property="og:title" content="Graph-First Programming IDE">
+    <meta property="og:description" content="Visual architecture design with automatic code generation and real-time validation">
+    <meta property="og:image" content="https://graphfirst.dev/og-image.png">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://graphfirst.dev/">
+    <meta property="twitter:title" content="Graph-First Programming IDE">
+    <meta property="twitter:description" content="Visual architecture design with automatic code generation and real-time validation">
+    <meta property="twitter:image" content="https://graphfirst.dev/twitter-image.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    
+    <!-- Apple Touch Icon -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    
+    <!-- Manifest for PWA -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="./styles.css" as="style">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" as="script" crossorigin="anonymous">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="./styles.css">
+    
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" 
+            integrity="sha512-23/qmhLKW1GNpQN0hDHMB7/f3b3e36pPcqMIy7Yy7sF1ajMJRlZrqNF8pqZ1+7hk6VT4b6Wq2xwHdB0x8BxQjkw==" 
+            crossorigin="anonymous" 
+            referrerpolicy="no-referrer" 
+            defer></script>
+    
+    <title>Graph-First Programming IDE v1.0</title>
+    
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Graph-First Programming IDE",
+        "description": "A comprehensive development environment for Graph-First Programming that enables visual architecture design with automatic code generation and real-time validation.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web Browser",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        },
+        "creator": {
+            "@type": "Organization",
+            "name": "Graph-First Programming Community",
+            "url": "https://graphfirst.dev"
+        },
+        "softwareVersion": "1.0.0",
+        "downloadUrl": "https://github.com/graph-first/ide",
+        "screenshot": "https://graphfirst.dev/screenshot.png"
+    }
+    </script>
+    
+    <!-- Performance and Analytics (placeholder for future implementation) -->
+    <!-- 
+    <script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'GA_MEASUREMENT_ID');
+    </script>
+    -->
+</head>
+<body>
+    <!-- Application Root -->
+    <div id="root">
+        <div style="padding: 20px; background: yellow; color: black; font-size: 24px;">
+            <h1>TEST: HTML is loading</h1>
+            <p>If you see this, the HTML file is being served correctly.</p>
+            <p id="js-test">JavaScript not yet executed</p>
+        </div>
+    </div>
+    
+    <!-- Basic JavaScript Test -->
+    <script>
+        console.log('Basic JavaScript is running');
+        document.getElementById('js-test').innerHTML = 'JavaScript is working!';
+        document.getElementById('js-test').style.color = 'green';
+    </script>
+    
+    <!-- Main Application Script -->
+    <script type="module" src="./index.tsx"></script>
+    
+    <!-- Loading Fallback -->
+    <noscript>
+        <div style="
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #2c3e50;
+            text-align: center;
+            padding: 20px;
+        ">
+            <div>
+                <h1 style="margin-bottom: 16px; color: #667eea;">Graph-First Programming IDE</h1>
+                <p style="margin-bottom: 12px; font-size: 18px;">JavaScript is required to run this application.</p>
+                <p style="color: #666; font-size: 14px;">
+                    Please enable JavaScript in your browser and refresh the page.
+                </p>
+                <div style="margin-top: 24px;">
+                    <a href="https://enable-javascript.com/" 
+                       style="
+                           color: #667eea; 
+                           text-decoration: none; 
+                           border-bottom: 1px solid #667eea;
+                       ">
+                        How to enable JavaScript
+                    </a>
+                </div>
+            </div>
+        </div>
+    </noscript>
+    
+    <!-- Application Loading Indicator -->
+    <div id="app-loading" style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100vh;
-        font-size: 18px;
-        color: #666;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="root">
-      <div class="loading">Loading Graph-First Programming IDE...</div>
+        z-index: 9999;
+        transition: opacity 0.5s ease;
+    ">
+        <div style="text-align: center; color: white;">
+            <div style="
+                width: 50px;
+                height: 50px;
+                border: 3px solid rgba(255, 255, 255, 0.3);
+                border-radius: 50%;
+                border-top: 3px solid white;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px auto;
+            "></div>
+            <h2 style="margin: 0 0 8px 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+                Loading Graph-First IDE
+            </h2>
+            <p style="margin: 0; opacity: 0.8; font-size: 14px;">
+                Initializing architecture visualizer...
+            </p>
+        </div>
     </div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+    
+    <!-- Hide loading indicator once app is ready -->
+    <script>
+        // Hide loading indicator when React app has mounted
+        window.addEventListener('load', function() {
+            // Give React a moment to render
+            setTimeout(function() {
+                const loadingEl = document.getElementById('app-loading');
+                if (loadingEl) {
+                    loadingEl.style.opacity = '0';
+                    setTimeout(function() {
+                        loadingEl.remove();
+                    }, 500);
+                }
+            }, 1000);
+        });
+        
+        // Performance monitoring
+        if ('performance' in window) {
+            window.addEventListener('load', function() {
+                setTimeout(function() {
+                    const perf = performance.getEntriesByType('navigation')[0];
+                    if (perf) {
+                        console.log(`App loaded in ${Math.round(perf.loadEventEnd - perf.fetchStart)}ms`);
+                    }
+                }, 0);
+            });
+        }
+        
+        // Error handling for module loading
+        window.addEventListener('error', function(e) {
+            console.error('Application error:', e.error);
+            
+            const loadingEl = document.getElementById('app-loading');
+            if (loadingEl) {
+                loadingEl.innerHTML = `
+                    <div style="text-align: center; color: white; max-width: 400px; padding: 20px;">
+                        <h2 style="margin: 0 0 16px 0;">Failed to Load</h2>
+                        <p style="margin: 0 0 16px 0; opacity: 0.9;">
+                            There was an error loading the application. 
+                        </p>
+                        <p style="margin: 0 0 20px 0; font-size: 12px; opacity: 0.7;">
+                            Error: ${e.message || 'Unknown error'}
+                        </p>
+                        <button onclick="window.location.reload()" style="
+                            background: rgba(255, 255, 255, 0.2);
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            color: white;
+                            padding: 8px 16px;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        ">
+                            Reload Page
+                        </button>
+                    </div>
+                `;
+            }
+        });
+    </script>
+    
+    <!-- CSS Animation for loading spinner -->
+    <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Ensure smooth loading transition */
+        #root {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        #root.loaded {
+            opacity: 1;
+        }
+    </style>
+    
+    <!-- Main Application Script -->
+    <script type="module" src="./index.tsx"></script>
+    
+    <!-- Service Worker Registration (for PWA functionality) -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(function(registration) {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch(function(registrationError) {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
+    </script>
+</body>
 </html>

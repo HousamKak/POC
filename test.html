@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Test</title>
+</head>
+<body>
+    <div id="test">
+        <h1>Initial HTML Content</h1>
+        <p>This should show before JavaScript runs.</p>
+    </div>
+    
+    <script>
+        console.log('JavaScript is running!');
+        document.getElementById('test').innerHTML = `
+            <h1 style="color: green;">JavaScript is working!</h1>
+            <p>Time: ${new Date().toLocaleTimeString()}</p>
+        `;
+    </script>
+</body>
+</html>
