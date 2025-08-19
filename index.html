@@ -34,14 +34,14 @@
     
     <!-- Preload critical resources -->
     <link rel="preload" href="./styles.css" as="style">
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" as="script" crossorigin="anonymous">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" as="script" crossorigin="anonymous" integrity="sha512-M7nHCiNUOwFt6Us3r8alutZLm9qMt4s9951uo8jqO4UwJ1hziseL6O3ndFyigx6+LREfZqnhHxYjKRJ8ZQ69DQ==">
     
     <!-- CSS -->
     <link rel="stylesheet" href="./styles.css">
     
     <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" 
-            integrity="sha512-23/qmhLKW1GNpQN0hDHMB7/f3b3e36pPcqMIy7Yy7sF1ajMJRlZrqNF8pqZ1+7hk6VT4b6Wq2xwHdB0x8BxQjkw==" 
+            integrity="sha512-M7nHCiNUOwFt6Us3r8alutZLm9qMt4s9951uo8jqO4UwJ1hziseL6O3ndFyigx6+LREfZqnhHxYjKRJ8ZQ69DQ==" 
             crossorigin="anonymous" 
             referrerpolicy="no-referrer" 
             defer></script>
@@ -234,9 +234,6 @@
             opacity: 1;
         }
     </style>
-    
-    <!-- Main Application Script -->
-    <script type="module" src="./index.tsx"></script>
     
     <!-- Service Worker Registration (for PWA functionality) -->
     <script>

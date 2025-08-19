@@ -862,112 +862,151 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
   }).filter(edge => edge.source && edge.target), [graph.nodes, graph.edges]);
 
   useEffect(() => {
-    if (!svgRef.current) return;
+    console.log('🎨 D3 visualization useEffect triggered');
+    console.log('📊 SVG ref current:', svgRef.current);
+    console.log('📈 Graph data - nodes:', graph.nodes.length, 'edges:', graph.edges.length);
+    
+    if (!svgRef.current) {
+      console.warn('⚠️ SVG ref is null, skipping D3 initialization');
+      return;
+    }
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+    try {
+      console.log('🔄 Starting D3 visualization update...');
+      const svg = d3.select(svgRef.current);
+      console.log('✅ D3 selected SVG element:', svg.node());
+      
+      svg.selectAll('*').remove();
+      console.log('🧹 Cleared existing D3 elements');
 
-    const width = 800;
-    const height = 600;
+      const width = 800;
+      const height = 600;
 
-    // Set SVG dimensions
-    svg.attr('width', width).attr('height', height);
+      // Set SVG dimensions
+      svg.attr('width', width).attr('height', height);
+      console.log(`📐 Set SVG dimensions: ${width}x${height}`);
 
-    // Create main group for zoom/pan
-    const g = svg.append('g');
+      // Create main group for zoom/pan
+      const g = svg.append('g');
+      console.log('✅ Created main group for zoom/pan');
 
-    // Add zoom behavior
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform.toString());
+      // Add zoom behavior
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform.toString());
+        });
+
+      svg.call(zoom);
+      console.log('✅ Applied zoom behavior');
+
+      console.log('🔗 Drawing edges...');
+      // Draw edges
+      g.selectAll('.edge')
+        .data(edgeData)
+        .enter()
+        .append('line')
+        .attr('class', 'edge')
+        .attr('x1', d => d.source?.x ?? 0)
+        .attr('y1', d => d.source?.y ?? 0)
+        .attr('x2', d => d.target?.x ?? 0)
+        .attr('y2', d => d.target?.y ?? 0)
+        .attr('stroke', '#666')
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', d => d.type === 'implements' ? '5,5' : '0')
+        .attr('marker-end', 'url(#arrowhead)');
+      
+      console.log(`✅ Drew ${edgeData.length} edges`);
+
+      // Add arrow marker
+      svg.append('defs')
+        .append('marker')
+        .attr('id', 'arrowhead')
+        .attr('viewBox', '-0 -5 10 10')
+        .attr('refX', 13)
+        .attr('refY', 0)
+        .attr('orient', 'auto')
+        .attr('markerWidth', 13)
+        .attr('markerHeight', 13)
+        .attr('xoverflow', 'visible')
+        .append('svg:path')
+        .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
+        .attr('fill', '#666')
+        .style('stroke', 'none');
+      
+      console.log('✅ Added arrow markers');
+
+      console.log('🔵 Drawing nodes...');
+      // Draw nodes
+      const nodes = g.selectAll('.node')
+        .data(nodeData)
+        .enter()
+        .append('g')
+        .attr('class', 'node')
+        .attr('transform', d => `translate(${d.x},${d.y})`)
+        .style('cursor', 'pointer');
+
+      console.log(`✅ Created ${nodeData.length} node groups`);
+
+      // Node circles
+      nodes.append('circle')
+        .attr('r', 30)
+        .attr('fill', d => getNodeColor(d.type))
+        .attr('stroke', d => selectedNode?.id === d.id ? '#000' : '#666')
+        .attr('stroke-width', d => selectedNode?.id === d.id ? 3 : 1);
+
+      console.log('✅ Added node circles');
+
+      // Node labels
+      nodes.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dy', '.35em')
+        .style('font-size', '12px')
+        .style('fill', 'white')
+        .style('font-weight', 'bold')
+        .text(d => d.name.length > 8 ? `${d.name.slice(0, 8)}...` : d.name);
+
+      console.log('✅ Added node labels');
+
+      // Node click handlers
+      nodes.on('click', (event, d) => {
+        console.log('👆 Node clicked:', d.name, d.id);
+        event.stopPropagation();
+        
+        if (connectionMode) {
+          // Create edge
+          if (connectionMode.sourceId !== d.id) {
+            const edgeType: EdgeType = connectionMode.sourceType === 'adapter' && d.type === 'port' 
+              ? 'implements' 
+              : 'dependency';
+            console.log('🔗 Creating edge:', connectionMode.sourceId, '->', d.id, edgeType);
+            onEdgeCreate(connectionMode.sourceId, d.id, edgeType);
+          }
+          setConnectionMode(null);
+        } else if (event.shiftKey) {
+          // Start connection mode
+          console.log('🔗 Starting connection mode from:', d.name);
+          setConnectionMode({ sourceId: d.id, sourceType: d.type });
+        } else {
+          // Select node
+          console.log('🎯 Selecting node:', d.name);
+          onNodeSelect(d);
+        }
       });
 
-    svg.call(zoom);
-
-    // Draw edges
-    g.selectAll('.edge')
-      .data(edgeData)
-      .enter()
-      .append('line')
-      .attr('class', 'edge')
-      .attr('x1', d => d.source?.x ?? 0)
-      .attr('y1', d => d.source?.y ?? 0)
-      .attr('x2', d => d.target?.x ?? 0)
-      .attr('y2', d => d.target?.y ?? 0)
-      .attr('stroke', '#666')
-      .attr('stroke-width', 2)
-      .attr('stroke-dasharray', d => d.type === 'implements' ? '5,5' : '0')
-      .attr('marker-end', 'url(#arrowhead)');
-
-    // Add arrow marker
-    svg.append('defs')
-      .append('marker')
-      .attr('id', 'arrowhead')
-      .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 13)
-      .attr('refY', 0)
-      .attr('orient', 'auto')
-      .attr('markerWidth', 13)
-      .attr('markerHeight', 13)
-      .attr('xoverflow', 'visible')
-      .append('svg:path')
-      .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
-      .attr('fill', '#666')
-      .style('stroke', 'none');
-
-    // Draw nodes
-    const nodes = g.selectAll('.node')
-      .data(nodeData)
-      .enter()
-      .append('g')
-      .attr('class', 'node')
-      .attr('transform', d => `translate(${d.x},${d.y})`)
-      .style('cursor', 'pointer');
-
-    // Node circles
-    nodes.append('circle')
-      .attr('r', 30)
-      .attr('fill', d => getNodeColor(d.type))
-      .attr('stroke', d => selectedNode?.id === d.id ? '#000' : '#666')
-      .attr('stroke-width', d => selectedNode?.id === d.id ? 3 : 1);
-
-    // Node labels
-    nodes.append('text')
-      .attr('text-anchor', 'middle')
-      .attr('dy', '.35em')
-      .style('font-size', '12px')
-      .style('fill', 'white')
-      .style('font-weight', 'bold')
-      .text(d => d.name.length > 8 ? `${d.name.slice(0, 8)}...` : d.name);
-
-    // Node click handlers
-    nodes.on('click', (event, d) => {
-      event.stopPropagation();
-      
-      if (connectionMode) {
-        // Create edge
-        if (connectionMode.sourceId !== d.id) {
-          const edgeType: EdgeType = connectionMode.sourceType === 'adapter' && d.type === 'port' 
-            ? 'implements' 
-            : 'dependency';
-          onEdgeCreate(connectionMode.sourceId, d.id, edgeType);
-        }
+      // Canvas click handler
+      svg.on('click', () => {
+        console.log('🖱️ Canvas clicked - clearing selection');
+        onNodeSelect(null);
         setConnectionMode(null);
-      } else if (event.shiftKey) {
-        // Start connection mode
-        setConnectionMode({ sourceId: d.id, sourceType: d.type });
-      } else {
-        // Select node
-        onNodeSelect(d);
-      }
-    });
+      });
 
-    // Canvas click handler
-    svg.on('click', () => {
-      onNodeSelect(null);
-      setConnectionMode(null);
-    });
+      console.log('🎉 D3 visualization update completed successfully');
+
+    } catch (error) {
+      console.error('💥 Error in D3 visualization:', error);
+      console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+    }
 
   }, [graph, selectedNode, connectionMode, onNodeSelect, onEdgeCreate, nodeData, edgeData]);
 
@@ -1418,16 +1457,45 @@ const GraphFirstProgrammingIDE: React.FC = () => {
 // ============================================================================
 
 function initializeApp(): void {
+  console.log('🚀 Initializing Graph-First Programming IDE...');
+  
   const container = document.getElementById('root');
   if (!container) {
+    console.error('❌ Root container not found in DOM');
     document.body.innerHTML = '<div style="color: red; padding: 20px;">Error: Root container not found</div>';
     return;
   }
 
+  console.log('✅ Root container found:', container);
+
   try {
+    console.log('🔄 Creating React root...');
     const root = createRoot(container);
+    console.log('✅ React root created successfully');
+    
+    console.log('🎯 Rendering main application component...');
     root.render(<GraphFirstProgrammingIDE />);
+    console.log('✅ Application rendered successfully');
+    
+    // Hide loading indicator
+    setTimeout(() => {
+      const loadingEl = document.getElementById('app-loading');
+      if (loadingEl) {
+        console.log('🎨 Hiding loading indicator...');
+        loadingEl.style.opacity = '0';
+        setTimeout(() => {
+          loadingEl.remove();
+          console.log('✅ Loading indicator removed');
+        }, 500);
+      }
+      
+      // Add loaded class to root
+      container.classList.add('loaded');
+      console.log('🎉 Application fully loaded and ready!');
+    }, 500);
+    
   } catch (error) {
+    console.error('💥 Error initializing app:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const sanitizedMessage = errorMessage.replace(/[&<>"']/g, (s) => 
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s] ?? s)
