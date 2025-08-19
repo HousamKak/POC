@@ -112,7 +112,9 @@ function extractImports(content: string): string[] {
   const imports: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = importRegex.exec(content)) !== null) {
-    imports.push(m[1]);
+    if (m[1]) {
+      imports.push(m[1]);
+    }
   }
   return imports;
 }
@@ -169,8 +171,13 @@ const VALIDATION_RULES: ValidationRule[] = [
             const resolvedImport = resolveImport(importPath, file);
             if (!resolvedImport) continue;
             // Use basename comparison for simplicity
-            const target = files.find(f => basename(f).startsWith(basename(resolvedImport).split('.')[0]));
-            if (target) dependencyMap.get(moduleName)!.add(getModuleName(target));
+            const resolvedBasename = basename(resolvedImport);
+            const basenameParts = resolvedBasename.split('.');
+            const baseName = basenameParts[0];
+            if (baseName) {
+              const target = files.find(f => basename(f).startsWith(baseName));
+              if (target) dependencyMap.get(moduleName)!.add(getModuleName(target));
+            }
           }
         } catch { /* ignore */ }
       }
@@ -241,7 +248,7 @@ const VALIDATION_RULES: ValidationRule[] = [
           if (!matches) continue;
           for (const decl of matches) {
             const nameMatch = decl.match(/interface\s+(\w+)/);
-            if (!nameMatch) continue;
+            if (!nameMatch || !nameMatch[1]) continue;
             const name = nameMatch[1];
             // Heuristic: if interface has method returning Promise or contains async keyword
             if ((/Promise<|async\s+/.test(decl)) && !portRegex.test(name)) {
@@ -269,12 +276,15 @@ const VALIDATION_RULES: ValidationRule[] = [
             const className = block.match(/class\s+(\w+)/)?.[1];
             if (!className || !adapterRegex.test(className)) continue;
             const impl = block.match(/implements\s+([^\n{]+)/);
-            if (!impl) {
+            if (!impl || !impl[1]) {
               violations.push(`${file}: Adapter ${className} should implement a port interface`);
               continue;
             }
             const interfaces = impl[1].split(',').map(s => s.trim());
-            if (!interfaces.some(i => /Port$/.test(i.split('<')[0]))) {
+            if (!interfaces.some(i => {
+              const interfaceParts = i.split('<');
+              return interfaceParts[0] && /Port$/.test(interfaceParts[0]);
+            })) {
               violations.push(`${file}: Adapter ${className} should implement a port interface (ending with 'Port')`);
             }
           }
@@ -298,11 +308,11 @@ const VALIDATION_RULES: ValidationRule[] = [
             const className = block.match(/class\s+(\w+)/)?.[1];
             if (!className) continue;
             const ctor = block.match(/constructor\s*\(([^)]*)\)/);
-            if (!ctor) continue;
+            if (!ctor || !ctor[1]) continue;
             const params = ctor[1].split(',').map(p => p.trim()).filter(Boolean);
             for (const param of params) {
               const typeMatch = param.match(/:\s*([A-Za-z0-9_]+)/);
-              if (!typeMatch) continue;
+              if (!typeMatch || !typeMatch[1]) continue;
               const typeName = typeMatch[1];
               if (!typeName.endsWith('Port') && !isPrimitiveType(typeName)) {
                 if (/Adapter$|Service$/.test(typeName)) {

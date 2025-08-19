@@ -13,10 +13,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-  "noEmit": true,
+    "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Type Checking */
+    /* Enhanced Type Checking */
     "strictNullChecks": true,
     "strictFunctionTypes": true,
     "strictBindCallApply": true,
@@ -28,8 +28,11 @@
     "noUnusedParameters": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
-    "noPropertyAccessFromIndexSignature": false,
-    "noUncheckedIndexedAccess": false,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "useUnknownInCatchVariables": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
 
     /* Path Mapping */
     "baseUrl": ".",
@@ -41,30 +44,40 @@
       "@/adapters/*": ["./src/adapters/*"],
       "@/ports/*": ["./src/ports/*"],
       "@/usecases/*": ["./src/usecases/*"],
-      "@/entities/*": ["./src/entities/*"]
+      "@/entities/*": ["./src/entities/*"],
+      "@/domain/*": ["./src/domain/*"],
+      "@/application/*": ["./src/application/*"],
+      "@/infrastructure/*": ["./src/infrastructure/*"],
+      "@/interface/*": ["./src/interface/*"]
     },
 
-  /* Advanced Options */
-  // Declarations disabled because noEmit=true; enable in a separate tsconfig.build.json if needed
-  "declaration": false,
-  "declarationMap": false,
+    /* Advanced Options */
+    "declaration": false,
+    "declarationMap": false,
     "sourceMap": true,
     "removeComments": false,
     "importHelpers": true,
     "downlevelIteration": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-  "incremental": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
 
     /* Node.js Compatibility */
-    "types": ["vite/client", "node", "@testing-library/jest-dom"],
-    "moduleDetection": "force"
+    "types": ["vite/client", "node", "@testing-library/jest-dom", "vitest/globals"],
+    "moduleDetection": "force",
+
+    /* Additional Checks */
+    "noErrorTruncation": true,
+    "preserveWatchOutput": true,
+    "pretty": true
   },
   "include": [
     "src/**/*",
     "index.tsx",
     "scripts/**/*",
     "vite.config.ts",
+    "vitest.config.ts",
     "tailwind.config.js",
     "**/*.d.ts"
   ],
@@ -76,7 +89,8 @@
     "**/*.spec.ts",
     "**/*.test.ts",
     "**/*.spec.tsx", 
-    "**/*.test.tsx"
+    "**/*.test.tsx",
+    ".tsbuildinfo"
   ],
   "references": [
     {

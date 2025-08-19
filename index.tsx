@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as d3 from 'd3';
 
@@ -40,17 +40,18 @@ export interface ArchitectureGraph {
 
 export interface GraphMetadata {
   readonly version: string;
-  readonly created: string;  // ISO string
-  readonly modified: string; // ISO string  
+  readonly created: string;
+  readonly modified: string;
   readonly description?: string;
 }
 
 export interface ValidationError {
   readonly id: string;
-  readonly type: 'layer_violation' | 'circular_dependency' | 'validation_error';
+  readonly type: 'layer_violation' | 'circular_dependency' | 'validation_error' | 'naming_violation';
   readonly message: string;
   readonly nodeId?: string;
   readonly edgeId?: string;
+  readonly severity: 'error' | 'warning';
 }
 
 export interface ValidationResult {
@@ -92,7 +93,78 @@ export interface GraphRepositoryPort {
 }
 
 export interface MetricsPort {
-  calculate(graph: ArchitectureGraph): Promise<ArchitectureMetrics>;
+  calculateMetrics(graph: ArchitectureGraph): Promise<ArchitectureMetrics>;
+}
+
+// ============================================================================
+// APPLICATION LAYER - Use Cases
+// ============================================================================
+
+export class ArchitectureValidationUseCase {
+  constructor(private validationAdapter: ValidationPort) {
+    if (!validationAdapter) {
+      throw new TypeError('ValidationPort is required');
+    }
+  }
+
+  async execute(graph: ArchitectureGraph): Promise<ValidationResult> {
+    if (!graph?.nodes || !graph?.edges) {
+      throw new TypeError('Invalid graph: nodes and edges are required');
+    }
+
+    try {
+      return await this.validationAdapter.validateGraph(graph);
+    } catch (error) {
+      throw new Error(`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+}
+
+export class CodeGenerationUseCase {
+  constructor(private codeGenAdapter: CodeGenerationPort) {
+    if (!codeGenAdapter) {
+      throw new TypeError('CodeGenerationPort is required');
+    }
+  }
+
+  async generateCode(graph: ArchitectureGraph, language: 'typescript' | 'python'): Promise<string> {
+    if (!graph?.nodes || !Array.isArray(graph.nodes)) {
+      throw new TypeError('Invalid graph: nodes array is required');
+    }
+
+    try {
+      switch (language) {
+        case 'typescript':
+          return await this.codeGenAdapter.generateTypeScript(graph);
+        case 'python':
+          return await this.codeGenAdapter.generatePython(graph);
+        default:
+          throw new Error(`Unsupported language: ${language as string}`);
+      }
+    } catch (error) {
+      throw new Error(`Code generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+}
+
+export class MetricsCalculationUseCase {
+  constructor(private metricsAdapter: MetricsPort) {
+    if (!metricsAdapter) {
+      throw new TypeError('MetricsPort is required');
+    }
+  }
+
+  async execute(graph: ArchitectureGraph): Promise<ArchitectureMetrics> {
+    if (!graph?.nodes || !graph?.edges) {
+      throw new TypeError('Invalid graph: nodes and edges are required');
+    }
+
+    try {
+      return await this.metricsAdapter.calculateMetrics(graph);
+    } catch (error) {
+      throw new Error(`Metrics calculation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
 }
 
 // ============================================================================
@@ -105,19 +177,28 @@ export class ArchitectureValidationAdapter implements ValidationPort {
     const warnings: ValidationError[] = [];
 
     try {
-      // Check layer violations (only on dependency edges)
+      // Check layer violations
       const layerViolations = await this.checkLayerViolations(graph);
-      errors.push(...layerViolations);
+      errors.push(...layerViolations.filter(v => v.severity === 'error'));
+      warnings.push(...layerViolations.filter(v => v.severity === 'warning'));
 
-      // Check for cycles (only on dependency edges)
+      // Check for cycles
       const cycles = await this.detectCycles(graph);
       cycles.forEach((cycle, index) => {
         errors.push({
           id: `cycle_${index}`,
           type: 'circular_dependency',
-          message: `Circular dependency detected: ${cycle.join(' → ')}`
+          message: `Circular dependency detected: ${cycle.join(' → ')}`,
+          severity: 'error'
         });
       });
+
+      // Validate naming conventions
+      for (const node of graph.nodes) {
+        const namingErrors = await this.validateNode(node);
+        errors.push(...namingErrors.filter(e => e.severity === 'error'));
+        warnings.push(...namingErrors.filter(e => e.severity === 'warning'));
+      }
 
       // Check for self-loops
       graph.edges.forEach(edge => {
@@ -126,37 +207,8 @@ export class ArchitectureValidationAdapter implements ValidationPort {
             id: `self_${edge.id}`,
             type: 'validation_error',
             message: 'Self-referencing edge detected',
-            edgeId: edge.id
-          });
-        }
-      });
-
-      // Check for duplicate edges
-      const seen = new Set<string>();
-      graph.edges.forEach(edge => {
-        const key = `${edge.type}:${edge.source}->${edge.target}`;
-        if (seen.has(key)) {
-          errors.push({
-            id: `dup_${edge.id}`,
-            type: 'validation_error',
-            message: `Duplicate edge: ${key}`,
-            edgeId: edge.id
-          });
-        }
-        seen.add(key);
-      });
-
-      // Validate implements edges (adapter -> port)
-      graph.edges.filter(e => e.type === 'implements').forEach(edge => {
-        const src = graph.nodes.find(n => n.id === edge.source);
-        const dst = graph.nodes.find(n => n.id === edge.target);
-        
-        if (src?.type !== 'adapter' || dst?.type !== 'port') {
-          errors.push({
-            id: `impl_dir_${edge.id}`,
-            type: 'validation_error',
-            message: `'implements' must be adapter → port (found ${src?.type} → ${dst?.type})`,
-            edgeId: edge.id
+            edgeId: edge.id,
+            severity: 'error'
           });
         }
       });
@@ -172,7 +224,8 @@ export class ArchitectureValidationAdapter implements ValidationPort {
         errors: [{
           id: 'validation_error',
           type: 'validation_error',
-          message: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+          message: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          severity: 'error'
         }],
         warnings: []
       };
@@ -184,16 +237,21 @@ export class ArchitectureValidationAdapter implements ValidationPort {
     graph.nodes.forEach(n => adj.set(n.id, []));
     
     // Only consider dependency edges for cycle detection
-    graph.edges.filter(e => e.type === 'dependency').forEach(edge => {
-      adj.get(edge.source)!.push(edge.target); // consumer -> provider
-    });
+    graph.edges
+      .filter(e => e.type === 'dependency')
+      .forEach(edge => {
+        const sources = adj.get(edge.source);
+        if (sources) {
+          sources.push(edge.target);
+        }
+      });
 
-    const visited = new Set<string>();
-    const recStack = new Set<string>();
     const cycles: string[][] = [];
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
 
     const dfs = (node: string, path: string[]): void => {
-      if (recStack.has(node)) {
+      if (recursionStack.has(node)) {
         const cycleStart = path.indexOf(node);
         if (cycleStart !== -1) {
           cycles.push([...path.slice(cycleStart), node]);
@@ -201,18 +259,20 @@ export class ArchitectureValidationAdapter implements ValidationPort {
         return;
       }
 
-      if (visited.has(node)) return;
+      if (visited.has(node)) {
+        return;
+      }
 
       visited.add(node);
-      recStack.add(node);
+      recursionStack.add(node);
       path.push(node);
 
-      const neighbors = adj.get(node) || [];
+      const neighbors = adj.get(node) ?? [];
       for (const neighbor of neighbors) {
         dfs(neighbor, [...path]);
       }
 
-      recStack.delete(node);
+      recursionStack.delete(node);
     };
 
     for (const node of graph.nodes) {
@@ -227,31 +287,46 @@ export class ArchitectureValidationAdapter implements ValidationPort {
   async validateNode(node: GraphNode): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
 
-    if (!node.name?.trim()) {
-      errors.push({
-        id: `empty_name_${node.id}`,
-        type: 'validation_error',
-        message: 'Node name cannot be empty',
-        nodeId: node.id
-      });
-    }
-
     // Validate naming conventions
     if (node.type === 'port' && !node.name.endsWith('Port')) {
       errors.push({
         id: `port_naming_${node.id}`,
-        type: 'validation_error',
+        type: 'naming_violation',
         message: 'Port names should end with "Port"',
-        nodeId: node.id
+        nodeId: node.id,
+        severity: 'warning'
       });
     }
 
     if (node.type === 'adapter' && !node.name.endsWith('Adapter')) {
       errors.push({
         id: `adapter_naming_${node.id}`,
-        type: 'validation_error',
+        type: 'naming_violation',
         message: 'Adapter names should end with "Adapter"',
-        nodeId: node.id
+        nodeId: node.id,
+        severity: 'warning'
+      });
+    }
+
+    if (node.type === 'usecase' && !node.name.endsWith('UseCase')) {
+      errors.push({
+        id: `usecase_naming_${node.id}`,
+        type: 'naming_violation',
+        message: 'Use case names should end with "UseCase"',
+        nodeId: node.id,
+        severity: 'warning'
+      });
+    }
+
+    // Validate layer consistency
+    const expectedLayer = this.getExpectedLayer(node.type);
+    if (node.layer !== expectedLayer) {
+      errors.push({
+        id: `layer_consistency_${node.id}`,
+        type: 'layer_violation',
+        message: `${node.type} should be in ${expectedLayer} layer, not ${node.layer}`,
+        nodeId: node.id,
+        severity: 'error'
       });
     }
 
@@ -261,428 +336,297 @@ export class ArchitectureValidationAdapter implements ValidationPort {
   private async checkLayerViolations(graph: ArchitectureGraph): Promise<ValidationError[]> {
     const violations: ValidationError[] = [];
 
-    // Define allowed dependencies per layer (consumer -> provider)
+    // Define allowed dependencies per layer
     const allowedDeps: Record<LayerType, LayerType[]> = {
-      domain: [],                               // domain depends on nobody
-      application: ['domain'],                  // app -> domain only
-      infrastructure: [],                       // infra shouldn't depend on app/interface/domain
-      interface: ['application', 'domain']      // controller -> usecase or domain
+      domain: [],
+      application: ['domain'],
+      infrastructure: ['domain', 'application'],
+      interface: ['application', 'domain']
     };
 
     graph.edges.forEach(edge => {
-      if (edge.type !== 'dependency') return; // Only check dependency edges
+      if (edge.type !== 'dependency') return;
 
-      const src = graph.nodes.find(n => n.id === edge.source); // consumer
-      const dst = graph.nodes.find(n => n.id === edge.target); // provider
+      const src = graph.nodes.find(n => n.id === edge.source);
+      const dst = graph.nodes.find(n => n.id === edge.target);
       if (!src || !dst) return;
 
-      const allowedTargets = allowedDeps[src.layer] || [];
+      const allowedTargets = allowedDeps[src.layer] ?? [];
       if (!allowedTargets.includes(dst.layer)) {
         violations.push({
           id: `layer_violation_${edge.id}`,
           type: 'layer_violation',
           message: `Invalid dependency: ${src.layer} → ${dst.layer} (${src.name} → ${dst.name})`,
-          edgeId: edge.id
+          edgeId: edge.id,
+          severity: 'error'
         });
       }
     });
 
     return violations;
   }
+
+  private getExpectedLayer(nodeType: NodeType): LayerType {
+    const typeToLayer: Record<NodeType, LayerType> = {
+      entity: 'domain',
+      port: 'domain',
+      usecase: 'application',
+      adapter: 'infrastructure',
+      controller: 'interface'
+    };
+    return typeToLayer[nodeType];
+  }
 }
 
-export class TypeScriptCodeGenerator implements CodeGenerationPort {
+export class TypeScriptCodeGenerationAdapter implements CodeGenerationPort {
   async generateTypeScript(graph: ArchitectureGraph): Promise<string> {
-    let code = `// Generated TypeScript Code\n// Created: ${new Date().toISOString()}\n\n`;
+    if (!graph?.nodes || !Array.isArray(graph.nodes)) {
+      throw new TypeError('Invalid graph: nodes array is required');
+    }
 
-    // Generate ports (interfaces)
+    const parts: string[] = [];
+    
+    // Header
+    parts.push('// Generated by Graph-First Programming IDE');
+    parts.push(`// Generated at: ${new Date().toISOString()}`);
+    parts.push('');
+
+    // Imports
+    parts.push('// Domain imports');
+    parts.push('');
+
+    // Generate interfaces for ports
     const ports = graph.nodes.filter(n => n.type === 'port');
-    for (const port of ports) {
-      code += this.generatePortInterface(port);
+    if (ports.length > 0) {
+      parts.push('// ============================================================================');
+      parts.push('// PORTS (Domain Layer)');
+      parts.push('// ============================================================================');
+      parts.push('');
+
+      for (const port of ports) {
+        parts.push(`/**`);
+        parts.push(` * ${port.description ?? `Port interface for ${port.name}`}`);
+        parts.push(` */`);
+        parts.push(`export interface ${port.name} {`);
+        parts.push('  // TODO: Add method signatures');
+        parts.push('}');
+        parts.push('');
+      }
     }
 
-    // Generate entities
+    // Generate classes for entities
     const entities = graph.nodes.filter(n => n.type === 'entity');
-    for (const entity of entities) {
-      code += this.generateEntityClass(entity);
+    if (entities.length > 0) {
+      parts.push('// ============================================================================');
+      parts.push('// ENTITIES (Domain Layer)');
+      parts.push('// ============================================================================');
+      parts.push('');
+
+      for (const entity of entities) {
+        parts.push(`/**`);
+        parts.push(` * ${entity.description ?? `Domain entity: ${entity.name}`}`);
+        parts.push(` */`);
+        parts.push(`export class ${entity.name} {`);
+        parts.push('  // TODO: Add properties and methods');
+        parts.push('}');
+        parts.push('');
+      }
     }
 
-    // Generate use cases (depend on ports)
-    const useCases = graph.nodes.filter(n => n.type === 'usecase');
-    for (const useCase of useCases) {
-      code += this.generateUseCaseClass(useCase, graph);
+    // Generate use cases
+    const usecases = graph.nodes.filter(n => n.type === 'usecase');
+    if (usecases.length > 0) {
+      parts.push('// ============================================================================');
+      parts.push('// USE CASES (Application Layer)');
+      parts.push('// ============================================================================');
+      parts.push('');
+
+      for (const usecase of usecases) {
+        const dependencies = this.getUseCaseDependencies(usecase, graph);
+        const constructorParams = dependencies.map(dep => `private ${this.toCamelCase(dep.name)}: ${dep.name}`).join(', ');
+        
+        parts.push(`/**`);
+        parts.push(` * ${usecase.description ?? `Use case: ${usecase.name}`}`);
+        parts.push(` */`);
+        parts.push(`export class ${usecase.name} {`);
+        if (dependencies.length > 0) {
+          parts.push(`  constructor(${constructorParams}) {}`);
+          parts.push('');
+        }
+        parts.push('  async execute(): Promise<void> {');
+        parts.push('    // TODO: Implement use case logic');
+        parts.push('  }');
+        parts.push('}');
+        parts.push('');
+      }
     }
 
-    // Generate adapters (implement ports)
+    // Generate adapters
     const adapters = graph.nodes.filter(n => n.type === 'adapter');
-    for (const adapter of adapters) {
-      code += this.generateAdapterClass(adapter, graph);
+    if (adapters.length > 0) {
+      parts.push('// ============================================================================');
+      parts.push('// ADAPTERS (Infrastructure Layer)');
+      parts.push('// ============================================================================');
+      parts.push('');
+
+      for (const adapter of adapters) {
+        const implementedPorts = this.getImplementedPorts(adapter, graph);
+        const implementsClause = implementedPorts.length > 0 
+          ? ` implements ${implementedPorts.map(p => p.name).join(', ')}`
+          : '';
+
+        parts.push(`/**`);
+        parts.push(` * ${adapter.description ?? `Adapter implementation: ${adapter.name}`}`);
+        parts.push(` */`);
+        parts.push(`export class ${adapter.name}${implementsClause} {`);
+        parts.push('  // TODO: Implement adapter methods');
+        parts.push('}');
+        parts.push('');
+      }
     }
 
     // Generate controllers
     const controllers = graph.nodes.filter(n => n.type === 'controller');
-    for (const controller of controllers) {
-      code += this.generateControllerClass(controller, graph);
+    if (controllers.length > 0) {
+      parts.push('// ============================================================================');
+      parts.push('// CONTROLLERS (Interface Layer)');
+      parts.push('// ============================================================================');
+      parts.push('');
+
+      for (const controller of controllers) {
+        const dependencies = this.getControllerDependencies(controller, graph);
+        const constructorParams = dependencies.map(dep => `private ${this.toCamelCase(dep.name)}: ${dep.name}`).join(', ');
+
+        parts.push(`/**`);
+        parts.push(` * ${controller.description ?? `Controller: ${controller.name}`}`);
+        parts.push(` */`);
+        parts.push(`export class ${controller.name} {`);
+        if (dependencies.length > 0) {
+          parts.push(`  constructor(${constructorParams}) {}`);
+          parts.push('');
+        }
+        parts.push('  // TODO: Add controller methods');
+        parts.push('}');
+        parts.push('');
+      }
     }
 
-    return code;
+    return parts.join('\n');
   }
 
   async generatePython(graph: ArchitectureGraph): Promise<string> {
-    let code = `# Generated Python Code\n# Created: ${new Date().toISOString()}\n\nfrom abc import ABC, abstractmethod\nfrom typing import Protocol, runtime_checkable\nfrom dataclasses import dataclass\n\n`;
+    if (!graph?.nodes || !Array.isArray(graph.nodes)) {
+      throw new TypeError('Invalid graph: nodes array is required');
+    }
 
-    // Generate ports as protocols
+    const parts: string[] = [];
+    
+    // Header
+    parts.push('# Generated by Graph-First Programming IDE');
+    parts.push(`# Generated at: ${new Date().toISOString()}`);
+    parts.push('');
+    parts.push('from abc import ABC, abstractmethod');
+    parts.push('from typing import Protocol, runtime_checkable');
+    parts.push('');
+
+    // Generate protocols for ports
     const ports = graph.nodes.filter(n => n.type === 'port');
-    for (const port of ports) {
-      code += this.generatePythonPort(port);
+    if (ports.length > 0) {
+      parts.push('# ============================================================================');
+      parts.push('# PORTS (Domain Layer)');
+      parts.push('# ============================================================================');
+      parts.push('');
+
+      for (const port of ports) {
+        parts.push(`@runtime_checkable`);
+        parts.push(`class ${port.name}(Protocol):`);
+        parts.push(`    """${port.description ?? `Port interface for ${port.name}`}"""`);
+        parts.push('    # TODO: Add method signatures');
+        parts.push('    pass');
+        parts.push('');
+      }
     }
 
-    // Generate entities as dataclasses
-    const entities = graph.nodes.filter(n => n.type === 'entity');
-    for (const entity of entities) {
-      code += this.generatePythonEntity(entity);
-    }
-
-    // Generate use cases
-    const useCases = graph.nodes.filter(n => n.type === 'usecase');
-    for (const useCase of useCases) {
-      code += this.generatePythonUseCase(useCase, graph);
-    }
-
-    return code;
+    return parts.join('\n');
   }
 
   async generateDependencyGraph(graph: ArchitectureGraph): Promise<string> {
-    let code = `// DEPENDENCY GRAPH\n`;
-    code += `export class DependencyGraph {\n`;
-    code += `  private instances = new Map<string, any>();\n\n`;
-    code += `  constructor() {\n`;
-    code += `    this.buildGraph();\n`;
-    code += `    this.validateGraph();\n`;
-    code += `  }\n\n`;
-    code += `  private buildGraph() {\n`;
+    // Generate DOT format for Graphviz
+    const parts: string[] = [];
+    parts.push('digraph ArchitectureGraph {');
+    parts.push('  rankdir=TB;');
+    parts.push('  node [shape=box, style=filled];');
+    parts.push('');
 
-    // First instantiate adapters that implement ports
-    const ports = graph.nodes.filter(n => n.type === 'port');
-    for (const port of ports) {
-      const adapter = this.resolveAdapterForPort(port.id, graph);
-      if (adapter) {
-        code += `    this.instances.set('${adapter.id}', new ${this.safeType(adapter.name)}());\n`;
+    // Add nodes
+    graph.nodes.forEach(node => {
+      const color = this.getNodeColor(node.type);
+      parts.push(`  "${node.name}" [fillcolor="${color}", label="${node.name}\\n(${node.type})"];`);
+    });
+
+    parts.push('');
+
+    // Add edges
+    graph.edges.forEach(edge => {
+      const src = graph.nodes.find(n => n.id === edge.source);
+      const dst = graph.nodes.find(n => n.id === edge.target);
+      if (src && dst) {
+        const style = edge.type === 'implements' ? 'dashed' : 'solid';
+        parts.push(`  "${src.name}" -> "${dst.name}" [style=${style}];`);
       }
-    }
+    });
 
-    // Instantiate use cases with port dependencies
-    const useCases = graph.nodes.filter(n => n.type === 'usecase');
-    for (const useCase of useCases) {
-      const portDeps = graph.edges
-        .filter(e => e.type === 'dependency' && e.source === useCase.id)
-        .map(e => e.target);
-      
-      const ctorArgs = portDeps.map(portId => {
-        const adapter = this.resolveAdapterForPort(portId, graph);
-        return adapter ? `this.instances.get('${adapter.id}')` : `undefined /* MISSING BINDING for ${portId} */`;
-      }).join(', ');
-      
-      code += `    this.instances.set('${useCase.id}', new ${this.safeType(useCase.name)}(${ctorArgs}));\n`;
-    }
-
-    // Instantiate controllers with use case dependencies
-    const controllers = graph.nodes.filter(n => n.type === 'controller');
-    for (const controller of controllers) {
-      const deps = graph.edges
-        .filter(e => e.type === 'dependency' && e.source === controller.id)
-        .map(e => e.target);
-      
-      const args = deps.map(id => `this.instances.get('${id}')`).join(', ');
-      code += `    this.instances.set('${controller.id}', new ${this.safeType(controller.name)}(${args}));\n`;
-    }
-
-    code += `  }\n\n`;
-    code += `  private validateGraph() {\n`;
-    code += `    console.log('Dependency graph validated successfully');\n`;
-    code += `  }\n\n`;
-    code += `  getInstance<T>(id: string): T {\n`;
-    code += `    const instance = this.instances.get(id);\n`;
-    code += `    if (!instance) throw new Error(\`Missing instance: \${id}\`);\n`;
-    code += `    return instance as T;\n`;
-    code += `  }\n`;
-    code += `}\n\n`;
-
-    return code;
+    parts.push('}');
+    return parts.join('\n');
   }
 
-  private generatePortInterface(port: GraphNode): string {
-    return `export interface ${this.safeType(port.name)} {\n  // Port interface for ${port.description || port.name}\n}\n\n`;
+  private getUseCaseDependencies(usecase: GraphNode, graph: ArchitectureGraph): GraphNode[] {
+    return graph.edges
+      .filter(e => e.source === usecase.id && e.type === 'dependency')
+      .map(e => graph.nodes.find(n => n.id === e.target))
+      .filter((n): n is GraphNode => n !== undefined);
   }
 
-  private generateEntityClass(entity: GraphNode): string {
-    return `export class ${this.safeType(entity.name)} {\n  // Entity: ${entity.description || entity.name}\n}\n\n`;
+  private getImplementedPorts(adapter: GraphNode, graph: ArchitectureGraph): GraphNode[] {
+    return graph.edges
+      .filter(e => e.source === adapter.id && e.type === 'implements')
+      .map(e => graph.nodes.find(n => n.id === e.target))
+      .filter((n): n is GraphNode => n !== undefined);
   }
 
-  private generateUseCaseClass(useCase: GraphNode, graph: ArchitectureGraph): string {
-    // Find dependency edges where this usecase is the consumer (source)
-    const depPortIds = graph.edges
-      .filter(e => e.type === 'dependency' && e.source === useCase.id)
-      .map(e => e.target);
-
-    const depPorts = depPortIds
-      .map(id => graph.nodes.find(n => n.id === id))
-      .filter((n): n is GraphNode => !!n && n.type === 'port');
-
-    const ctorParams = depPorts.map(p => 
-      `private ${this.safeProp(p.id)}: ${this.safeType(p.name)}`
-    ).join(',\n    ');
-
-    let code = `export class ${this.safeType(useCase.name)} {\n`;
-    if (depPorts.length > 0) {
-      code += `  constructor(\n    ${ctorParams}\n  ) {}\n\n`;
-    }
-    
-    code += `  async execute(): Promise<void> {\n`;
-    code += `    // Use case logic: ${useCase.description || useCase.name}\n`;
-    code += `  }\n`;
-    code += `}\n\n`;
-
-    return code;
+  private getControllerDependencies(controller: GraphNode, graph: ArchitectureGraph): GraphNode[] {
+    return graph.edges
+      .filter(e => e.source === controller.id && e.type === 'dependency')
+      .map(e => graph.nodes.find(n => n.id === e.target))
+      .filter((n): n is GraphNode => n !== undefined);
   }
 
-  private generateAdapterClass(adapter: GraphNode, graph: ArchitectureGraph): string {
-    // Find which port this adapter implements
-    const implEdge = graph.edges.find(e => e.type === 'implements' && e.source === adapter.id);
-    const port = implEdge ? graph.nodes.find(n => n.id === implEdge.target) : null;
-
-    let code = `export class ${this.safeType(adapter.name)}`;
-    if (port) {
-      code += ` implements ${this.safeType(port.name)}`;
-    }
-    code += ` {\n`;
-    code += `  // Adapter implementation: ${adapter.description || adapter.name}\n`;
-    code += `}\n\n`;
-
-    return code;
+  private toCamelCase(str: string): string {
+    return str.charAt(0).toLowerCase() + str.slice(1);
   }
 
-  private generateControllerClass(controller: GraphNode, graph: ArchitectureGraph): string {
-    const deps = graph.edges
-      .filter(e => e.type === 'dependency' && e.source === controller.id)
-      .map(e => e.target);
-    
-    const depNodes = deps
-      .map(id => graph.nodes.find(n => n.id === id))
-      .filter((n): n is GraphNode => !!n);
-
-    const ctorParams = depNodes.map(n => 
-      `private ${this.safeProp(n.id)}: ${this.safeType(n.name)}`
-    ).join(',\n    ');
-
-    let code = `export class ${this.safeType(controller.name)} {\n`;
-    if (depNodes.length > 0) {
-      code += `  constructor(\n    ${ctorParams}\n  ) {}\n\n`;
-    }
-    
-    code += `  async handle(): Promise<void> {\n`;
-    code += `    // Controller logic: ${controller.description || controller.name}\n`;
-    code += `  }\n`;
-    code += `}\n\n`;
-
-    return code;
-  }
-
-  private generatePythonPort(port: GraphNode): string {
-    return `@runtime_checkable\nclass ${this.safeType(port.name)}(Protocol):\n    \"\"\"Port: ${port.description || port.name}\"\"\"\n    pass\n\n`;
-  }
-
-  private generatePythonEntity(entity: GraphNode): string {
-    return `@dataclass\nclass ${this.safeType(entity.name)}:\n    \"\"\"Entity: ${entity.description || entity.name}\"\"\"\n    pass\n\n`;
-  }
-
-  private generatePythonUseCase(useCase: GraphNode, graph: ArchitectureGraph): string {
-    const depPortIds = graph.edges
-      .filter(e => e.type === 'dependency' && e.source === useCase.id)
-      .map(e => e.target);
-
-    const depPorts = depPortIds
-      .map(id => graph.nodes.find(n => n.id === id))
-      .filter((n): n is GraphNode => !!n && n.type === 'port');
-
-    let code = `class ${this.safeType(useCase.name)}:\n`;
-    code += `    \"\"\"Use case: ${useCase.description || useCase.name}\"\"\"\n\n`;
-    
-    if (depPorts.length > 0) {
-      code += `    def __init__(self`;
-      depPorts.forEach(p => {
-        code += `, ${this.safeProp(p.id)}: ${this.safeType(p.name)}`;
-      });
-      code += `):\n`;
-      depPorts.forEach(p => {
-        code += `        self.${this.safeProp(p.id)} = ${this.safeProp(p.id)}\n`;
-      });
-      code += `\n`;
-    }
-    
-    code += `    async def execute(self) -> None:\n`;
-    code += `        \"\"\"Execute use case logic\"\"\"\n`;
-    code += `        pass\n\n`;
-
-    return code;
-  }
-
-  private resolveAdapterForPort(portId: string, graph: ArchitectureGraph): GraphNode | null {
-    // implements edge: adapter -> port
-    const impl = graph.edges.find(e => e.type === 'implements' && e.target === portId);
-    return impl ? graph.nodes.find(n => n.id === impl.source) ?? null : null;
-  }
-
-  private safeType(name: string): string {
-    return name.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^\d/, '_$&');
-  }
-
-  private safeProp(id: string): string {
-    return id.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^\d/, '_$&');
+  private getNodeColor(type: NodeType): string {
+    const colors: Record<NodeType, string> = {
+      port: 'lightcoral',
+      adapter: 'lightgreen',
+      usecase: 'lightblue',
+      controller: 'lightyellow',
+      entity: 'plum'
+    };
+    return colors[type];
   }
 }
 
-export class LocalStorageGraphRepository implements GraphRepositoryPort {
-  private readonly STORAGE_KEY = 'gfp_graphs';
-  private readonly METADATA_KEY = 'gfp_graph_metadata';
-
-  async save(graph: ArchitectureGraph): Promise<void> {
-    try {
-      const graphWithUpdatedMetadata = {
-        ...graph,
-        metadata: {
-          ...graph.metadata,
-          modified: new Date().toISOString()
-        }
-      };
-
-      const stored = this.getStoredGraphs();
-      const graphId = this.generateGraphId(graph);
-      stored[graphId] = graphWithUpdatedMetadata;
-      
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(stored));
-      
-      // Update metadata index
-      const metadata = this.getStoredMetadata();
-      metadata[graphId] = {
-        id: graphId,
-        name: graph.metadata.description || 'Untitled Graph',
-        modified: graphWithUpdatedMetadata.metadata.modified
-      };
-      localStorage.setItem(this.METADATA_KEY, JSON.stringify(metadata));
-    } catch (error) {
-      throw new Error(`Failed to save graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async load(id: string): Promise<ArchitectureGraph> {
-    try {
-      const stored = this.getStoredGraphs();
-      const graph = stored[id];
-      
-      if (!graph) {
-        throw new Error(`Graph not found: ${id}`);
-      }
-      
-      return graph;
-    } catch (error) {
-      throw new Error(`Failed to load graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async list(): Promise<Array<{id: string; name: string; modified: string}>> {
-    try {
-      const metadata = this.getStoredMetadata();
-      return Object.values(metadata);
-    } catch (error) {
-      console.error('Failed to list graphs:', error);
-      return [];
-    }
-  }
-
-  async delete(id: string): Promise<void> {
-    try {
-      const stored = this.getStoredGraphs();
-      delete stored[id];
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(stored));
-      
-      const metadata = this.getStoredMetadata();
-      delete metadata[id];
-      localStorage.setItem(this.METADATA_KEY, JSON.stringify(metadata));
-    } catch (error) {
-      throw new Error(`Failed to delete graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private getStoredGraphs(): Record<string, ArchitectureGraph> {
-    try {
-      const stored = localStorage.getItem(this.STORAGE_KEY);
-      return stored ? JSON.parse(stored) : {};
-    } catch {
-      return {};
-    }
-  }
-
-  private getStoredMetadata(): Record<string, {id: string; name: string; modified: string}> {
-    try {
-      const stored = localStorage.getItem(this.METADATA_KEY);
-      return stored ? JSON.parse(stored) : {};
-    } catch {
-      return {};
-    }
-  }
-
-  private generateGraphId(graph: ArchitectureGraph): string {
-    return `graph_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-}
-
-// ============================================================================
-// APPLICATION LAYER - Use Cases
-// ============================================================================
-
-export class ValidateArchitectureUseCase {
-  constructor(private validator: ValidationPort) {}
-
-  async execute(graph: ArchitectureGraph): Promise<ValidationResult> {
+export class MetricsAdapter implements MetricsPort {
+  async calculateMetrics(graph: ArchitectureGraph): Promise<ArchitectureMetrics> {
     if (!graph?.nodes || !graph?.edges) {
       throw new TypeError('Invalid graph: nodes and edges are required');
     }
 
-    return this.validator.validateGraph(graph);
-  }
-}
+    const validationAdapter = new ArchitectureValidationAdapter();
+    const cycles = await validationAdapter.detectCycles(graph);
+    const validationResult = await validationAdapter.validateGraph(graph);
 
-export class GenerateCodeUseCase {
-  constructor(private generator: CodeGenerationPort) {}
-
-  async execute(graph: ArchitectureGraph, language: 'typescript' | 'python'): Promise<string> {
-    if (!graph?.nodes || !graph?.edges) {
-      throw new TypeError('Invalid graph: nodes and edges are required');
-    }
-
-    switch (language) {
-      case 'typescript':
-        return this.generator.generateTypeScript(graph);
-      case 'python':
-        return this.generator.generatePython(graph);
-      default:
-        throw new Error(`Unsupported language: ${language}`);
-    }
-  }
-}
-
-export class CalculateMetricsUseCase {
-  constructor(private validator: ValidationPort) {}
-
-  async execute(graph: ArchitectureGraph): Promise<ArchitectureMetrics> {
-    if (!graph?.nodes || !graph?.edges) {
-      throw new TypeError('Invalid graph: nodes and edges are required');
-    }
-
-    const validationResult = await this.validator.validateGraph(graph);
-    const cycles = await this.validator.detectCycles(graph);
-    
     return {
       totalNodes: graph.nodes.length,
       totalEdges: graph.edges.length,
@@ -697,10 +641,14 @@ export class CalculateMetricsUseCase {
     const adj = new Map<string, string[]>();
     graph.nodes.forEach(n => adj.set(n.id, []));
     
-    // Only consider dependency edges
-    graph.edges.filter(e => e.type === 'dependency').forEach(edge => {
-      adj.get(edge.source)!.push(edge.target);
-    });
+    graph.edges
+      .filter(e => e.type === 'dependency')
+      .forEach(edge => {
+        const sources = adj.get(edge.source);
+        if (sources) {
+          sources.push(edge.target);
+        }
+      });
 
     let maxDepth = 0;
     const visited = new Set<string>();
@@ -711,7 +659,7 @@ export class CalculateMetricsUseCase {
       
       maxDepth = Math.max(maxDepth, depth);
       
-      const neighbors = adj.get(node) || [];
+      const neighbors = adj.get(node) ?? [];
       for (const neighbor of neighbors) {
         dfs(neighbor, depth + 1);
       }
@@ -727,27 +675,91 @@ export class CalculateMetricsUseCase {
   }
 }
 
-export class SaveGraphUseCase {
-  constructor(private repository: GraphRepositoryPort) {}
+export class LocalStorageGraphRepository implements GraphRepositoryPort {
+  private readonly storageKey = 'graph-first-ide-graphs';
 
-  async execute(graph: ArchitectureGraph): Promise<void> {
+  async save(graph: ArchitectureGraph): Promise<void> {
     if (!graph?.nodes || !graph?.edges) {
       throw new TypeError('Invalid graph: nodes and edges are required');
     }
 
-    return this.repository.save(graph);
+    try {
+      const updatedGraph: ArchitectureGraph = {
+        ...graph,
+        metadata: {
+          ...graph.metadata,
+          modified: new Date().toISOString()
+        }
+      };
+
+      const existingGraphs = await this.getAllGraphs();
+      const graphId = graph.metadata.description ?? 'default';
+      existingGraphs[graphId] = updatedGraph;
+      
+      localStorage.setItem(this.storageKey, JSON.stringify(existingGraphs));
+    } catch (error) {
+      throw new Error(`Failed to save graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
-}
 
-export class LoadGraphUseCase {
-  constructor(private repository: GraphRepositoryPort) {}
-
-  async execute(id: string): Promise<ArchitectureGraph> {
+  async load(id: string): Promise<ArchitectureGraph> {
     if (!id?.trim()) {
       throw new TypeError('Graph ID is required');
     }
 
-    return this.repository.load(id);
+    try {
+      const graphs = await this.getAllGraphs();
+      const graph = graphs[id];
+      
+      if (!graph) {
+        throw new Error(`Graph with ID '${id}' not found`);
+      }
+
+      return graph;
+    } catch (error) {
+      throw new Error(`Failed to load graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async list(): Promise<Array<{id: string; name: string; modified: string}>> {
+    try {
+      const graphs = await this.getAllGraphs();
+      return Object.entries(graphs).map(([id, graph]) => ({
+        id,
+        name: graph.metadata.description ?? id,
+        modified: graph.metadata.modified
+      }));
+    } catch (error) {
+      throw new Error(`Failed to list graphs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async delete(id: string): Promise<void> {
+    if (!id?.trim()) {
+      throw new TypeError('Graph ID is required');
+    }
+
+    try {
+      const graphs = await this.getAllGraphs();
+      if (!(id in graphs)) {
+        throw new Error(`Graph with ID '${id}' not found`);
+      }
+
+      delete graphs[id];
+      localStorage.setItem(this.storageKey, JSON.stringify(graphs));
+    } catch (error) {
+      throw new Error(`Failed to delete graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async getAllGraphs(): Promise<Record<string, ArchitectureGraph>> {
+    try {
+      const stored = localStorage.getItem(this.storageKey);
+      return stored ? JSON.parse(stored) as Record<string, ArchitectureGraph> : {};
+    } catch (error) {
+      console.warn('Failed to parse stored graphs, returning empty object:', error);
+      return {};
+    }
   }
 }
 
@@ -756,11 +768,16 @@ export class LoadGraphUseCase {
 // ============================================================================
 
 interface ToolboxProps {
-  onNodeTypeSelect: (nodeType: NodeType) => void;
+  readonly onNodeTypeSelect: (nodeType: NodeType) => void;
 }
 
 const Toolbox: React.FC<ToolboxProps> = ({ onNodeTypeSelect }) => {
-  const nodeTypes: Array<{type: NodeType; label: string; color: string; description: string}> = [
+  const nodeTypes: ReadonlyArray<{
+    readonly type: NodeType;
+    readonly label: string;
+    readonly color: string;
+    readonly description: string;
+  }> = [
     { type: 'port', label: '🔌 Port', color: 'bg-red-500', description: 'Interface definition' },
     { type: 'adapter', label: '🔧 Adapter', color: 'bg-green-500', description: 'Implementation' },
     { type: 'usecase', label: '⚙️ Use Case', color: 'bg-blue-500', description: 'Business logic' },
@@ -768,14 +785,17 @@ const Toolbox: React.FC<ToolboxProps> = ({ onNodeTypeSelect }) => {
     { type: 'entity', label: '📦 Entity', color: 'bg-purple-500', description: 'Domain model' }
   ];
 
-  const handleDragStart = (e: React.DragEvent, nodeType: NodeType) => {
-    e.dataTransfer.setData('nodeType', nodeType);
-    e.dataTransfer.effectAllowed = 'copy';
-  };
+  const handleDragStart = useCallback((e: React.DragEvent, nodeType: NodeType) => {
+    if (!nodeType) {
+      console.warn('Invalid node type for drag operation');
+      return;
+    }
+    e.dataTransfer.setData('text/plain', nodeType);
+  }, []);
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-gray-700 mb-3">Components</h3>
+    <div className="w-64 bg-white border-r border-gray-200 p-4">
+      <h3 className="font-semibold text-gray-900 mb-4">Components</h3>
       <div className="space-y-2">
         {nodeTypes.map(({ type, label, color, description }) => (
           <div
@@ -783,10 +803,18 @@ const Toolbox: React.FC<ToolboxProps> = ({ onNodeTypeSelect }) => {
             draggable
             onDragStart={(e) => handleDragStart(e, type)}
             onClick={() => onNodeTypeSelect(type)}
-            className={`${color} text-white p-2 rounded cursor-pointer hover:opacity-80 transition-opacity select-none text-sm`}
+            className={`${color} text-white p-3 rounded cursor-pointer hover:opacity-80 transition-opacity`}
             title={description}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                onNodeTypeSelect(type);
+              }
+            }}
           >
-            {label}
+            <div className="font-medium">{label}</div>
+            <div className="text-xs opacity-90">{description}</div>
           </div>
         ))}
       </div>
@@ -794,15 +822,15 @@ const Toolbox: React.FC<ToolboxProps> = ({ onNodeTypeSelect }) => {
   );
 };
 
-interface VisualizationCanvasProps {
-  graph: ArchitectureGraph;
-  selectedNode: GraphNode | null;
-  onNodeSelect: (node: GraphNode | null) => void;
-  onNodeCreate: (type: NodeType, position: Position) => void;
-  onEdgeCreate: (sourceId: string, targetId: string, edgeType: EdgeType) => void;
+interface GraphVisualizationProps {
+  readonly graph: ArchitectureGraph;
+  readonly selectedNode: GraphNode | null;
+  readonly onNodeSelect: (node: GraphNode | null) => void;
+  readonly onNodeCreate: (type: NodeType, position: Position) => void;
+  readonly onEdgeCreate: (sourceId: string, targetId: string, type: EdgeType) => void;
 }
 
-const VisualizationCanvas: React.FC<VisualizationCanvasProps> = ({
+const GraphVisualization: React.FC<GraphVisualizationProps> = ({
   graph,
   selectedNode,
   onNodeSelect,
@@ -810,328 +838,204 @@ const VisualizationCanvas: React.FC<VisualizationCanvasProps> = ({
   onEdgeCreate
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [connectionMode, setConnectionMode] = useState<{active: boolean; sourceId?: string; edgeType?: EdgeType}>({active: false});
+  const [draggedNodeType, setDraggedNodeType] = useState<NodeType | null>(null);
+  const [connectionMode, setConnectionMode] = useState<{
+    sourceId: string;
+    sourceType: NodeType;
+  } | null>(null);
 
-  // D3 visualization effect
+  // Memoize node and edge data for D3
+  const nodeData = useMemo(() => graph.nodes.map(node => ({
+    ...node,
+    x: node.position.x,
+    y: node.position.y
+  })), [graph.nodes]);
+
+  const edgeData = useMemo(() => graph.edges.map(edge => {
+    const source = graph.nodes.find(n => n.id === edge.source);
+    const target = graph.nodes.find(n => n.id === edge.target);
+    return {
+      ...edge,
+      source: source ? { ...source, x: source.position.x, y: source.position.y } : null,
+      target: target ? { ...target, x: target.position.x, y: target.position.y } : null
+    };
+  }).filter(edge => edge.source && edge.target), [graph.nodes, graph.edges]);
+
   useEffect(() => {
     if (!svgRef.current) return;
 
     const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove(); // Clear previous render
+    svg.selectAll('*').remove();
 
     const width = 800;
     const height = 600;
 
-    // Create zoom behavior
+    // Set SVG dimensions
+    svg.attr('width', width).attr('height', height);
+
+    // Create main group for zoom/pan
+    const g = svg.append('g');
+
+    // Add zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
       .on('zoom', (event) => {
-        g.attr('transform', event.transform);
+        g.attr('transform', event.transform.toString());
       });
 
     svg.call(zoom);
 
-    // Main group for zooming/panning
-    const g = svg.append('g');
-
-    // Add definitions for gradients and markers
-    const defs = svg.append('defs');
-    
-    // Arrow marker for dependency edges
-    defs.append('marker')
-      .attr('id', 'arrowhead')
-      .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 8)
-      .attr('refY', 0)
-      .attr('markerWidth', 4)
-      .attr('markerHeight', 4)
-      .attr('orient', 'auto')
-      .append('path')
-      .attr('d', 'M0,-5L10,0L0,5')
-      .attr('class', 'fill-gray-600');
-
-    // Color mapping for node types
-    const nodeColors: Record<NodeType, string> = {
-      port: '#ef4444',      // red
-      adapter: '#22c55e',   // green
-      usecase: '#3b82f6',   // blue
-      controller: '#eab308', // yellow
-      entity: '#a855f7'     // purple
-    };
-
-    // Render edges
-    const edges = g.selectAll('.edge')
-      .data(graph.edges)
+    // Draw edges
+    g.selectAll('.edge')
+      .data(edgeData)
       .enter()
       .append('line')
-      .attr('class', (d) => `edge ${d.type}`)
-      .attr('stroke', (d) => d.type === 'implements' ? '#6b7280' : '#9ca3af')
+      .attr('class', 'edge')
+      .attr('x1', d => d.source?.x ?? 0)
+      .attr('y1', d => d.source?.y ?? 0)
+      .attr('x2', d => d.target?.x ?? 0)
+      .attr('y2', d => d.target?.y ?? 0)
+      .attr('stroke', '#666')
       .attr('stroke-width', 2)
-      .attr('stroke-dasharray', (d) => d.type === 'implements' ? '5,5' : 'none')
-      .attr('marker-end', (d) => d.type === 'dependency' ? 'url(#arrowhead)' : 'none')
-      .attr('x1', (d) => {
-        const source = graph.nodes.find(n => n.id === d.source);
-        return source ? source.position.x : 0;
-      })
-      .attr('y1', (d) => {
-        const source = graph.nodes.find(n => n.id === d.source);
-        return source ? source.position.y : 0;
-      })
-      .attr('x2', (d) => {
-        const target = graph.nodes.find(n => n.id === d.target);
-        return target ? target.position.x : 0;
-      })
-      .attr('y2', (d) => {
-        const target = graph.nodes.find(n => n.id === d.target);
-        return target ? target.position.y : 0;
-      });
+      .attr('stroke-dasharray', d => d.type === 'implements' ? '5,5' : '0')
+      .attr('marker-end', 'url(#arrowhead)');
 
-    // Create drag behavior
-    const drag = d3.drag<SVGGElement, GraphNode>()
-      .on('start', (event) => {
-        event.sourceEvent?.stopPropagation();
-      })
-      .on('drag', (event, d) => {
-        d.position = { x: event.x, y: event.y };
-        d3.select<SVGGElement, GraphNode>(event.subject as any)
-          .attr('transform', `translate(${event.x},${event.y})`);
-        
-        // Update connected edges
-        edges
-          .filter((edge: GraphEdge) => edge.source === d.id || edge.target === d.id)
-          .attr('x1', (edge: GraphEdge) => {
-            const source = graph.nodes.find(n => n.id === edge.source);
-            return source ? source.position.x : 0;
-          })
-          .attr('y1', (edge: GraphEdge) => {
-            const source = graph.nodes.find(n => n.id === edge.source);
-            return source ? source.position.y : 0;
-          })
-          .attr('x2', (edge: GraphEdge) => {
-            const target = graph.nodes.find(n => n.id === edge.target);
-            return target ? target.position.x : 0;
-          })
-          .attr('y2', (edge: GraphEdge) => {
-            const target = graph.nodes.find(n => n.id === edge.target);
-            return target ? target.position.y : 0;
-          });
-      })
-      .on('end', (_event, d) => {
-        onNodeSelect(d);
-      });
+    // Add arrow marker
+    svg.append('defs')
+      .append('marker')
+      .attr('id', 'arrowhead')
+      .attr('viewBox', '-0 -5 10 10')
+      .attr('refX', 13)
+      .attr('refY', 0)
+      .attr('orient', 'auto')
+      .attr('markerWidth', 13)
+      .attr('markerHeight', 13)
+      .attr('xoverflow', 'visible')
+      .append('svg:path')
+      .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
+      .attr('fill', '#666')
+      .style('stroke', 'none');
 
-    // Render nodes
-    const nodeGroups = g.selectAll('.node-group')
-      .data(graph.nodes)
+    // Draw nodes
+    const nodes = g.selectAll('.node')
+      .data(nodeData)
       .enter()
       .append('g')
-      .attr('class', 'node-group')
-      .attr('transform', (d) => `translate(${d.position.x},${d.position.y})`)
-      .call(drag);
+      .attr('class', 'node')
+      .attr('transform', d => `translate(${d.x},${d.y})`)
+      .style('cursor', 'pointer');
 
     // Node circles
-    nodeGroups
-      .append('circle')
-      .attr('r', 25)
-      .attr('fill', (d) => nodeColors[d.type])
-      .attr('stroke', (d) => selectedNode?.id === d.id ? '#1f2937' : '#ffffff')
-      .attr('stroke-width', (d) => selectedNode?.id === d.id ? 3 : 2)
-      .attr('class', 'cursor-pointer');
+    nodes.append('circle')
+      .attr('r', 30)
+      .attr('fill', d => getNodeColor(d.type))
+      .attr('stroke', d => selectedNode?.id === d.id ? '#000' : '#666')
+      .attr('stroke-width', d => selectedNode?.id === d.id ? 3 : 1);
 
     // Node labels
-    nodeGroups
-      .append('text')
+    nodes.append('text')
       .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('class', 'text-xs font-semibold fill-white pointer-events-none')
-      .text((d) => d.name.substring(0, 8));
+      .attr('dy', '.35em')
+      .style('font-size', '12px')
+      .style('fill', 'white')
+      .style('font-weight', 'bold')
+      .text(d => d.name.length > 8 ? `${d.name.slice(0, 8)}...` : d.name);
 
     // Node click handlers
-    nodeGroups.on('click', (event, d) => {
+    nodes.on('click', (event, d) => {
       event.stopPropagation();
       
-      if (connectionMode.active && connectionMode.sourceId && connectionMode.sourceId !== d.id) {
-        // Complete connection
-        onEdgeCreate(connectionMode.sourceId, d.id, connectionMode.edgeType || 'dependency');
-        setConnectionMode({ active: false });
+      if (connectionMode) {
+        // Create edge
+        if (connectionMode.sourceId !== d.id) {
+          const edgeType: EdgeType = connectionMode.sourceType === 'adapter' && d.type === 'port' 
+            ? 'implements' 
+            : 'dependency';
+          onEdgeCreate(connectionMode.sourceId, d.id, edgeType);
+        }
+        setConnectionMode(null);
       } else if (event.shiftKey) {
         // Start connection mode
-        setConnectionMode({ active: true, sourceId: d.id, edgeType: 'dependency' });
+        setConnectionMode({ sourceId: d.id, sourceType: d.type });
       } else {
+        // Select node
         onNodeSelect(d);
       }
     });
 
-    // Canvas click to clear selection
+    // Canvas click handler
     svg.on('click', () => {
-      if (connectionMode.active) {
-        setConnectionMode({ active: false });
-      } else {
-        onNodeSelect(null);
-      }
+      onNodeSelect(null);
+      setConnectionMode(null);
     });
 
-  }, [graph, selectedNode, connectionMode, onNodeSelect, onEdgeCreate]);
+  }, [graph, selectedNode, connectionMode, onNodeSelect, onEdgeCreate, nodeData, edgeData]);
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    const nodeType = e.dataTransfer.getData('nodeType') as NodeType;
-    const svg = svgRef.current!;
-    const rect = svg.getBoundingClientRect();
-    
-    // Get client coordinates
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    
-    // Apply inverse zoom transform
-    const t = d3.zoomTransform(svg as any);
-    const x = (px - t.x) / t.k;
-    const y = (py - t.y) / t.k;
-    
-    onNodeCreate(nodeType, { x, y });
-  };
+    if (!svgRef.current || !draggedNodeType) return;
 
-  const handleDragOver = (e: React.DragEvent) => {
+    const rect = svgRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    onNodeCreate(draggedNodeType, { x, y });
+    setDraggedNodeType(null);
+  }, [draggedNodeType, onNodeCreate]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-  };
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const nodeType = e.dataTransfer.getData('text/plain') as NodeType;
+    setDraggedNodeType(nodeType);
+  }, []);
 
   return (
-    <div className="relative w-full h-full border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-      {/* Instructions overlay */}
-      <div className="absolute top-4 left-4 bg-white/90 p-3 rounded-lg shadow-sm text-sm z-10">
-        <div>🖱️ <strong>Shift+Click twice</strong> to connect nodes</div>
-        <div>🖱️ <strong>Drag</strong> nodes to reposition</div>
-        <div>📦 <strong>Drop</strong> components from toolbox</div>
-      </div>
-
-      {/* Connection mode indicator */}
-      {connectionMode.active && (
-        <div className="absolute top-4 right-4 bg-blue-500 text-white p-3 rounded-lg shadow-sm text-sm z-10">
-          🔗 Click target node to connect
-        </div>
-      )}
-
+    <div className="flex-1 relative">
       <svg
         ref={svgRef}
         width="100%"
         height="100%"
-        viewBox="0 0 800 600"
         onDrop={handleDrop}
         onDragOver={handleDragOver}
-        className="w-full h-full"
+        onDragEnter={handleDragEnter}
+        className="border border-gray-300"
       />
+      {connectionMode && (
+        <div className="absolute top-4 left-4 bg-blue-100 border border-blue-300 rounded p-2">
+          <p className="text-sm text-blue-800">
+            Connection mode: Click target node to create edge
+          </p>
+          <button
+            onClick={() => setConnectionMode(null)}
+            className="text-xs text-blue-600 underline"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 };
 
-interface PropertiesPanelProps {
-  selectedNode: GraphNode | null;
-  onNodeUpdate: (node: GraphNode) => void;
-  onNodeDelete: () => void;
-}
-
-const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
-  selectedNode,
-  onNodeUpdate,
-  onNodeDelete
-}) => {
-  if (!selectedNode) {
-    return (
-      <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Properties</h3>
-        <p className="text-sm text-gray-500">Select a node to edit properties</p>
-      </div>
-    );
-  }
-
-  const handleInputChange = (field: keyof GraphNode, value: any) => {
-    onNodeUpdate({
-      ...selectedNode,
-      [field]: value
-    });
+const getNodeColor = (type: NodeType): string => {
+  const colors: Record<NodeType, string> = {
+    port: '#ef4444',      // red
+    adapter: '#22c55e',   // green
+    usecase: '#3b82f6',   // blue
+    controller: '#eab308', // yellow
+    entity: '#a855f7'     // purple
   };
-
-  const layerOptions: Array<{value: LayerType; label: string}> = [
-    { value: 'domain', label: 'Domain' },
-    { value: 'application', label: 'Application' },
-    { value: 'infrastructure', label: 'Infrastructure' },
-    { value: 'interface', label: 'Interface' }
-  ];
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-700">Properties</h3>
-        <button
-          type="button"
-          onClick={onNodeDelete}
-          className="text-red-600 hover:text-red-800 text-sm"
-          aria-label="Delete node"
-        >
-          🗑️ Delete
-        </button>
-      </div>
-      
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1" htmlFor="node-name">
-            Name
-          </label>
-          <input
-            id="node-name"
-            type="text"
-            value={selectedNode.name}
-            onChange={(e) => handleInputChange('name', e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            aria-label="Node name"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1" htmlFor="node-layer">
-            Layer
-          </label>
-          <select
-            id="node-layer"
-            value={selectedNode.layer}
-            onChange={(e) => handleInputChange('layer', e.target.value as LayerType)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            aria-label="Node layer"
-          >
-            {layerOptions.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1" htmlFor="node-description">
-            Description
-          </label>
-          <textarea
-            id="node-description"
-            value={selectedNode.description || ''}
-            onChange={(e) => handleInputChange('description', e.target.value)}
-            rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            aria-label="Node description"
-          />
-        </div>
-
-        <div className="text-xs text-gray-500">
-          <div>Type: <span className="font-medium">{selectedNode.type}</span></div>
-          <div>ID: <span className="font-mono">{selectedNode.id}</span></div>
-        </div>
-      </div>
-    </div>
-  );
+  return colors[type];
 };
 
 interface ValidationModalProps {
-  isOpen: boolean;
-  result: ValidationResult | null;
-  onClose: () => void;
+  readonly isOpen: boolean;
+  readonly result: ValidationResult | null;
+  readonly onClose: () => void;
 }
 
 const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, result, onClose }) => {
@@ -1139,38 +1043,35 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, result, onClo
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Architecture Validation Results</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-            aria-label="Close validation results"
-          >
-            ✕
-          </button>
-        </div>
+      <div className="bg-white rounded-lg max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">
+              Architecture Validation Results
+            </h2>
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700"
+              aria-label="Close modal"
+            >
+              ✕
+            </button>
+          </div>
 
-        <div className="space-y-4">
-          {result.isValid ? (
-            <div className="bg-green-50 border border-green-200 rounded p-3">
-              <div className="text-green-800 font-medium">✅ Architecture is valid!</div>
-              <div className="text-green-700 text-sm">No violations or cycles detected.</div>
+          <div className="mb-4">
+            <div className={`p-3 rounded ${result.isValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+              <span className="font-medium">
+                {result.isValid ? '✓ Valid Architecture' : '✗ Validation Failed'}
+              </span>
             </div>
-          ) : (
-            <div className="bg-red-50 border border-red-200 rounded p-3">
-              <div className="text-red-800 font-medium">❌ Architecture violations detected</div>
-              <div className="text-red-700 text-sm">{result.errors.length} errors found.</div>
-            </div>
-          )}
+          </div>
 
           {result.errors.length > 0 && (
-            <div>
-              <h3 className="font-medium text-red-800 mb-2">Errors:</h3>
+            <div className="mb-4">
+              <h3 className="font-medium text-red-800 mb-2">Errors ({result.errors.length})</h3>
               <div className="space-y-2">
                 {result.errors.map((error, index) => (
-                  <div key={error.id || index} className="bg-red-50 border-l-4 border-red-400 p-3">
+                  <div key={`error-${index}`} className="flex items-start space-x-2 p-2 bg-red-50 rounded">
                     <div className="text-sm">
                       <span className="font-medium text-red-800">{error.type}:</span>
                       <span className="text-red-700 ml-1">{error.message}</span>
@@ -1182,11 +1083,11 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, result, onClo
           )}
 
           {result.warnings.length > 0 && (
-            <div>
-              <h3 className="font-medium text-yellow-800 mb-2">Warnings:</h3>
+            <div className="mb-4">
+              <h3 className="font-medium text-yellow-800 mb-2">Warnings ({result.warnings.length})</h3>
               <div className="space-y-2">
                 {result.warnings.map((warning, index) => (
-                  <div key={warning.id || index} className="bg-yellow-50 border-l-4 border-yellow-400 p-3">
+                  <div key={`warning-${index}`} className="flex items-start space-x-2 p-2 bg-yellow-50 rounded">
                     <div className="text-sm">
                       <span className="font-medium text-yellow-800">{warning.type}:</span>
                       <span className="text-yellow-700 ml-1">{warning.message}</span>
@@ -1196,16 +1097,16 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, result, onClo
               </div>
             </div>
           )}
-        </div>
 
-        <div className="mt-6 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            Close
-          </button>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1217,6 +1118,17 @@ const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, result, onClo
 // ============================================================================
 
 const GraphFirstProgrammingIDE: React.FC = () => {
+  // Initialize adapters
+  const validationAdapter = useMemo(() => new ArchitectureValidationAdapter(), []);
+  const codeGenAdapter = useMemo(() => new TypeScriptCodeGenerationAdapter(), []);
+  const metricsAdapter = useMemo(() => new MetricsAdapter(), []);
+  const repositoryAdapter = useMemo(() => new LocalStorageGraphRepository(), []);
+
+  // Initialize use cases
+  const validationUseCase = useMemo(() => new ArchitectureValidationUseCase(validationAdapter), [validationAdapter]);
+  const codeGenUseCase = useMemo(() => new CodeGenerationUseCase(codeGenAdapter), [codeGenAdapter]);
+  const metricsUseCase = useMemo(() => new MetricsCalculationUseCase(metricsAdapter), [metricsAdapter]);
+
   // State
   const [graph, setGraph] = useState<ArchitectureGraph>({
     nodes: [],
@@ -1234,148 +1146,144 @@ const GraphFirstProgrammingIDE: React.FC = () => {
   const [metrics, setMetrics] = useState<ArchitectureMetrics | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [showValidationModal, setShowValidationModal] = useState(false);
-  const [codeLanguage, setCodeLanguage] = useState<'typescript' | 'python'>('typescript');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Dependencies (Dependency Injection)
-  const validator = new ArchitectureValidationAdapter();
-  const codeGenerator = new TypeScriptCodeGenerator();
-  const repository = new LocalStorageGraphRepository();
-
-  // Use Cases
-  const validateUseCase = new ValidateArchitectureUseCase(validator);
-  const generateCodeUseCase = new GenerateCodeUseCase(codeGenerator);
-  const calculateMetricsUseCase = new CalculateMetricsUseCase(validator);
-  const saveGraphUseCase = new SaveGraphUseCase(repository);
-
-  // Node Management
+  // Handlers
   const handleNodeCreate = useCallback((type: NodeType, position: Position) => {
-    const nodeId = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const layerMapping: Record<NodeType, LayerType> = {
-      entity: 'domain',
-      port: 'domain',
-      usecase: 'application',
-      adapter: 'infrastructure',
-      controller: 'interface'
-    };
+    try {
+      const nodeId = `${type}_${Date.now()}`;
+      const nodeName = `${type.charAt(0).toUpperCase()}${type.slice(1)}${graph.nodes.filter(n => n.type === type).length + 1}`;
+      
+      // Determine layer based on node type
+      const getLayer = (nodeType: NodeType): LayerType => {
+        const typeToLayer: Record<NodeType, LayerType> = {
+          entity: 'domain',
+          port: 'domain',
+          usecase: 'application',
+          adapter: 'infrastructure',
+          controller: 'interface'
+        };
+        return typeToLayer[nodeType];
+      };
 
-    const newNode: GraphNode = {
-      id: nodeId,
-      name: `${type.charAt(0).toUpperCase() + type.slice(1)}${Date.now() % 1000}`,
-      type,
-      layer: layerMapping[type],
-      position,
-      description: `A new ${type} component`
-    };
+      const newNode: GraphNode = {
+        id: nodeId,
+        name: nodeName,
+        type,
+        layer: getLayer(type),
+        position,
+        description: `Generated ${type} component`
+      };
 
-    setGraph(prev => ({
-      ...prev,
-      nodes: [...prev.nodes, newNode],
-      metadata: {
-        ...prev.metadata,
-        modified: new Date().toISOString()
+      setGraph(prev => ({
+        ...prev,
+        nodes: [...prev.nodes, newNode],
+        metadata: {
+          ...prev.metadata,
+          modified: new Date().toISOString()
+        }
+      }));
+
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create node: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [graph.nodes]);
+
+  const handleEdgeCreate = useCallback((sourceId: string, targetId: string, type: EdgeType) => {
+    try {
+      // Validate edge doesn't already exist
+      const existingEdge = graph.edges.find(e => 
+        e.source === sourceId && e.target === targetId && e.type === type
+      );
+      
+      if (existingEdge) {
+        setError('Edge already exists between these nodes');
+        return;
       }
-    }));
-  }, []);
 
-  const handleNodeUpdate = useCallback((updatedNode: GraphNode) => {
-    setGraph(prev => ({
-      ...prev,
-      nodes: prev.nodes.map(node => 
-        node.id === updatedNode.id ? updatedNode : node
-      ),
-      metadata: {
-        ...prev.metadata,
-        modified: new Date().toISOString()
-      }
-    }));
-    setSelectedNode(updatedNode);
-  }, []);
+      const edgeId = `${sourceId}_${targetId}_${type}_${Date.now()}`;
+      const newEdge: GraphEdge = {
+        id: edgeId,
+        source: sourceId,
+        target: targetId,
+        type
+      };
 
-  const handleNodeDelete = useCallback(() => {
-    if (!selectedNode) return;
+      setGraph(prev => ({
+        ...prev,
+        edges: [...prev.edges, newEdge],
+        metadata: {
+          ...prev.metadata,
+          modified: new Date().toISOString()
+        }
+      }));
 
-    setGraph(prev => ({
-      ...prev,
-      nodes: prev.nodes.filter(node => node.id !== selectedNode.id),
-      edges: prev.edges.filter(edge => 
-        edge.source !== selectedNode.id && edge.target !== selectedNode.id
-      ),
-      metadata: {
-        ...prev.metadata,
-        modified: new Date().toISOString()
-      }
-    }));
-    setSelectedNode(null);
-  }, [selectedNode]);
-
-  const handleEdgeCreate = useCallback((sourceId: string, targetId: string, edgeType: EdgeType) => {
-    const edgeId = `${edgeType}_${sourceId}_${targetId}_${Date.now()}`;
-    
-    // Check if edge already exists
-    const exists = graph.edges.some(edge => 
-      edge.source === sourceId && edge.target === targetId && edge.type === edgeType
-    );
-
-    if (exists) return;
-
-    const newEdge: GraphEdge = {
-      id: edgeId,
-      source: sourceId,
-      target: targetId,
-      type: edgeType
-    };
-
-    setGraph(prev => ({
-      ...prev,
-      edges: [...prev.edges, newEdge],
-      metadata: {
-        ...prev.metadata,
-        modified: new Date().toISOString()
-      }
-    }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create edge: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   }, [graph.edges]);
 
-  // Actions
   const handleValidate = useCallback(async () => {
     try {
-      const result = await validateUseCase.execute(graph);
+      setIsLoading(true);
+      setError(null);
+      
+      const result = await validationUseCase.execute(graph);
       setValidationResult(result);
       setShowValidationModal(true);
-    } catch (error) {
-      console.error('Validation failed:', error);
+    } catch (err) {
+      setError(`Validation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
     }
-  }, [graph, validateUseCase]);
+  }, [graph, validationUseCase]);
 
-  const handleGenerateCode = useCallback(async () => {
+  const handleGenerateCode = useCallback(async (language: 'typescript' | 'python' = 'typescript') => {
     try {
-      const code = await generateCodeUseCase.execute(graph, codeLanguage);
+      setIsLoading(true);
+      setError(null);
+      
+      const code = await codeGenUseCase.generateCode(graph, language);
       setGeneratedCode(code);
-    } catch (error) {
-      console.error('Code generation failed:', error);
-      setGeneratedCode(`// Error generating code: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } catch (err) {
+      setError(`Code generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
     }
-  }, [graph, codeLanguage, generateCodeUseCase]);
+  }, [graph, codeGenUseCase]);
 
   const handleCalculateMetrics = useCallback(async () => {
     try {
-      const calculatedMetrics = await calculateMetricsUseCase.execute(graph);
+      setIsLoading(true);
+      setError(null);
+      
+      const calculatedMetrics = await metricsUseCase.execute(graph);
       setMetrics(calculatedMetrics);
-    } catch (error) {
-      console.error('Metrics calculation failed:', error);
+    } catch (err) {
+      setError(`Metrics calculation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
     }
-  }, [graph, calculateMetricsUseCase]);
+  }, [graph, metricsUseCase]);
 
   const handleSaveGraph = useCallback(async () => {
     try {
-      await saveGraphUseCase.execute(graph);
-      alert('Graph saved successfully!');
-    } catch (error) {
-      console.error('Save failed:', error);
-      alert(`Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsLoading(true);
+      setError(null);
+      
+      await repositoryAdapter.save(graph);
+      setError(null);
+    } catch (err) {
+      setError(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
     }
-  }, [graph, saveGraphUseCase]);
+  }, [graph, repositoryAdapter]);
 
-  const handleNewProject = useCallback(() => {
+  const handleClearGraph = useCallback(() => {
     setGraph({
       nodes: [],
       edges: [],
@@ -1390,6 +1298,7 @@ const GraphFirstProgrammingIDE: React.FC = () => {
     setGeneratedCode('');
     setMetrics(null);
     setValidationResult(null);
+    setError(null);
   }, []);
 
   // Auto-calculate metrics when graph changes
@@ -1400,107 +1309,76 @@ const GraphFirstProgrammingIDE: React.FC = () => {
   }, [graph, handleCalculateMetrics]);
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Left Sidebar */}
-      <div className="w-64 bg-white border-r border-gray-200 flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b border-gray-200">
-          <h1 className="text-lg font-bold text-gray-900">Graph-First IDE</h1>
-          <p className="text-sm text-gray-500">v1.0.0</p>
-        </div>
-
-        {/* Toolbar */}
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex flex-col gap-2">
+    <div className="h-screen flex flex-col bg-gray-100">
+      {/* Toolbar */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-gray-900">Graph-First Programming IDE</h1>
+          
+          <div className="flex items-center space-x-2">
             <button
-              type="button"
-              onClick={handleNewProject}
-              className="w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              📁 New Project
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveGraph}
-              className="w-full px-3 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              💾 Save Graph
-            </button>
-            <button
-              type="button"
               onClick={handleValidate}
-              className="w-full px-3 py-2 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              disabled={isLoading}
+              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
             >
-              🔍 Validate
+              {isLoading ? 'Validating...' : '🔍 Validate'}
+            </button>
+            
+            <button
+              onClick={() => handleGenerateCode('typescript')}
+              disabled={isLoading || graph.nodes.length === 0}
+              className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {isLoading ? 'Generating...' : '🔧 Generate Code'}
+            </button>
+            
+            <button
+              onClick={handleSaveGraph}
+              disabled={isLoading}
+              className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 disabled:opacity-50"
+            >
+              {isLoading ? 'Saving...' : '💾 Save'}
+            </button>
+            
+            <button
+              onClick={handleClearGraph}
+              disabled={isLoading}
+              className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 disabled:opacity-50"
+            >
+              🗑️ Clear
             </button>
           </div>
         </div>
 
-        {/* Toolbox */}
-        <div className="p-4 flex-1">
-          <Toolbox onNodeTypeSelect={(type) => {}} />
-        </div>
+        {/* Error Display */}
+        {error && (
+          <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded text-red-700 text-sm">
+            {error}
+          </div>
+        )}
 
-        {/* Properties Panel */}
-        <div className="p-4 border-t border-gray-200">
-          <PropertiesPanel
-            selectedNode={selectedNode}
-            onNodeUpdate={handleNodeUpdate}
-            onNodeDelete={handleNodeDelete}
-          />
-        </div>
+        {/* Metrics Display */}
+        {metrics && (
+          <div className="mt-2 flex items-center space-x-4 text-sm text-gray-600">
+            <span>Nodes: {metrics.totalNodes}</span>
+            <span>Edges: {metrics.totalEdges}</span>
+            <span>Complexity: {metrics.complexity.toFixed(2)}</span>
+            <span>Max Depth: {metrics.maxDepth}</span>
+            <span>Cycles: {metrics.cycleCount}</span>
+            <span>Layer Violations: {metrics.layerViolations}</span>
+          </div>
+        )}
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Toolbar */}
-        <div className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold text-gray-900">Architecture Canvas</h2>
-            {metrics && (
-              <div className="flex items-center gap-4 text-sm text-gray-600">
-                <span>Nodes: <strong>{metrics.totalNodes}</strong></span>
-                <span>Edges: <strong>{metrics.totalEdges}</strong></span>
-                <span>Complexity: <strong>{metrics.complexity.toFixed(2)}</strong></span>
-                {metrics.cycleCount > 0 && (
-                  <span className="text-red-600 font-medium">
-                    Cycles: {metrics.cycleCount}
-                  </span>
-                )}
-                {metrics.layerViolations > 0 && (
-                  <span className="text-red-600 font-medium">
-                    Violations: {metrics.layerViolations}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+      <div className="flex-1 flex">
+        {/* Toolbox */}
+        <Toolbox onNodeTypeSelect={() => {}} />
 
-          <div className="flex items-center gap-2">
-            <select
-              value={codeLanguage}
-              onChange={(e) => setCodeLanguage(e.target.value as 'typescript' | 'python')}
-              className="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Code generation language"
-            >
-              <option value="typescript">TypeScript</option>
-              <option value="python">Python</option>
-            </select>
-            <button
-              type="button"
-              onClick={handleGenerateCode}
-              className="px-4 py-2 bg-orange-600 text-white rounded text-sm hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            >
-              🔧 Generate Code
-            </button>
-          </div>
-        </div>
-
-        {/* Canvas and Code Panel */}
         <div className="flex-1 flex">
-          {/* Visualization Canvas */}
-          <div className="flex-1 p-6">
-            <VisualizationCanvas
+          {/* Canvas */}
+          <div className="flex-1">
+            <GraphVisualization
               graph={graph}
               selectedNode={selectedNode}
               onNodeSelect={setSelectedNode}
@@ -1539,7 +1417,7 @@ const GraphFirstProgrammingIDE: React.FC = () => {
 // APPLICATION BOOTSTRAP
 // ============================================================================
 
-function initializeApp() {
+function initializeApp(): void {
   const container = document.getElementById('root');
   if (!container) {
     document.body.innerHTML = '<div style="color: red; padding: 20px;">Error: Root container not found</div>';
@@ -1550,7 +1428,11 @@ function initializeApp() {
     const root = createRoot(container);
     root.render(<GraphFirstProgrammingIDE />);
   } catch (error) {
-    container.innerHTML = `<div style="color: red; padding: 20px;">Error initializing app: ${error instanceof Error ? error.message.replace(/[&<>"']/g, (s) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s] || s)) : 'Unknown error'}</div>`;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const sanitizedMessage = errorMessage.replace(/[&<>"']/g, (s) => 
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s] ?? s)
+    );
+    container.innerHTML = `<div style="color: red; padding: 20px;">Error initializing app: ${sanitizedMessage}</div>`;
   }
 }
 
