@@ -877,18 +877,215 @@ class CalculateMetricsUseCase {
 const GraphFirstIDE: React.FC = () => {
   console.log('GraphFirstIDE component rendering...');
   
+  // State management with proper typing
+  const [graph, setGraph] = useState<ArchitectureGraph>(() => ({
+    nodes: [],
+    edges: [],
+    metadata: {
+      version: '1.0.0',
+      created: new Date(),
+      modified: new Date(),
+      description: 'New Architecture Graph'
+    }
+  }));
+
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [showCodeModal, setShowCodeModal] = useState<boolean>(false);
+  const [generatedCode, setGeneratedCode] = useState<string>('');
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [metrics, setMetrics] = useState<ArchitectureMetrics | null>(null);
+
+  // Use cases and adapters
+  const validationAdapter = useMemo(() => new ArchitectureValidationAdapter(), []);
+  const codeGenerator = useMemo(() => new TypeScriptCodeGenerator(), []);
+  const createNodeUseCase = useMemo(() => new CreateNodeUseCase(validationAdapter), [validationAdapter]);
+  const createEdgeUseCase = useMemo(() => new CreateEdgeUseCase(), []);
+  const calculateMetricsUseCase = useMemo(() => new CalculateMetricsUseCase(), []);
+
+  // Calculate metrics when graph changes
+  useEffect(() => {
+    const updateMetrics = async (): Promise<void> => {
+      try {
+        const newMetrics = await calculateMetricsUseCase.execute(graph);
+        setMetrics(newMetrics);
+      } catch (error) {
+        console.error('Error calculating metrics:', error);
+      }
+    };
+
+    updateMetrics();
+  }, [graph, calculateMetricsUseCase]);
+
+  // Validate graph when it changes
+  useEffect(() => {
+    const validateGraph = async (): Promise<void> => {
+      try {
+        const result = await validationAdapter.validateGraph(graph);
+        setValidationResult(result);
+      } catch (error) {
+        console.error('Error validating graph:', error);
+      }
+    };
+
+    validateGraph();
+  }, [graph, validationAdapter]);
+
+  /**
+   * Handle creating a new node on the canvas
+   */
+  const handleNodeCreate = useCallback(async (type: NodeType, position: Position): Promise<void> => {
+    try {
+      const layerMap: Record<NodeType, LayerType> = {
+        port: 'domain',
+        entity: 'domain',
+        usecase: 'application',
+        adapter: 'infrastructure',
+        controller: 'interface'
+      };
+
+      const newNode = await createNodeUseCase.execute({
+        name: `New${type.charAt(0).toUpperCase() + type.slice(1)}`,
+        type,
+        layer: layerMap[type],
+        position,
+        description: `A new ${type} component`
+      });
+
+      setGraph(prevGraph => ({
+        ...prevGraph,
+        nodes: [...prevGraph.nodes, newNode],
+        metadata: {
+          ...prevGraph.metadata,
+          modified: new Date()
+        }
+      }));
+
+      setSelectedNode(newNode);
+    } catch (error) {
+      console.error('Error creating node:', error);
+      alert(`Failed to create node: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [createNodeUseCase]);
+
+  /**
+   * Handle connecting two nodes with an edge
+   */
+  const handleNodeConnect = useCallback(async (sourceId: string, targetId: string): Promise<void> => {
+    try {
+      const sourceNode = graph.nodes.find(n => n.id === sourceId);
+      const targetNode = graph.nodes.find(n => n.id === targetId);
+
+      if (!sourceNode || !targetNode) {
+        throw new Error('Source or target node not found');
+      }
+
+      // Determine edge type based on node types
+      let edgeType: EdgeType = 'dependency';
+      if (sourceNode.type === 'port' && targetNode.type === 'adapter') {
+        edgeType = 'implements';
+      }
+
+      const newEdge = await createEdgeUseCase.execute({
+        sourceId,
+        targetId,
+        type: edgeType
+      });
+
+      setGraph(prevGraph => ({
+        ...prevGraph,
+        edges: [...prevGraph.edges, newEdge],
+        metadata: {
+          ...prevGraph.metadata,
+          modified: new Date()
+        }
+      }));
+    } catch (error) {
+      console.error('Error connecting nodes:', error);
+      alert(`Failed to connect nodes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [graph.nodes, createEdgeUseCase]);
+
+  /**
+   * Handle updating a node's properties
+   */
+  const handleNodeUpdate = useCallback((updatedNode: GraphNode): void => {
+    setGraph(prevGraph => ({
+      ...prevGraph,
+      nodes: prevGraph.nodes.map(node => 
+        node.id === updatedNode.id ? updatedNode : node
+      ),
+      metadata: {
+        ...prevGraph.metadata,
+        modified: new Date()
+      }
+    }));
+  }, []);
+
+  /**
+   * Handle generating code from the current graph
+   */
+  const handleGenerateCode = useCallback(async (): Promise<void> => {
+    try {
+      const code = await codeGenerator.generateTypeScript(graph);
+      setGeneratedCode(code);
+      setShowCodeModal(true);
+    } catch (error) {
+      console.error('Error generating code:', error);
+      alert(`Failed to generate code: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [graph, codeGenerator]);
+
+  /**
+   * Handle saving the current project
+   */
+  const handleSave = useCallback((): void => {
+    // In a real implementation, this would save to a repository
+    const projectData = JSON.stringify(graph, null, 2);
+    const blob = new Blob([projectData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `architecture-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    URL.revokeObjectURL(url);
+  }, [graph]);
+
   return (
-    <div style={{ 
-      padding: '20px', 
-      fontSize: '18px', 
-      color: '#333',
-      backgroundColor: '#f0f0f0',
-      minHeight: '100vh',
-      border: '3px solid red'
-    }}>
-      <h1 style={{ color: 'blue' }}>Graph-First Programming IDE</h1>
-      <p style={{ color: 'green' }}>Component is rendering successfully!</p>
-      <p>If you can see this, React is working.</p>
+    <div className="ide-container">
+      <Toolbar
+        onSave={handleSave}
+        onGenerateCode={handleGenerateCode}
+        validationResult={validationResult}
+        metrics={metrics}
+      />
+      
+      <div className="main-content">
+        <ToolboxPanel onCreateNode={handleNodeCreate} />
+        
+        <VisualizationCanvas
+          graph={graph}
+          selectedNode={selectedNode}
+          onNodeSelect={setSelectedNode}
+          onNodeCreate={handleNodeCreate}
+          onNodeConnect={handleNodeConnect}
+        />
+        
+        <PropertiesPanel
+          selectedNode={selectedNode}
+          onNodeUpdate={handleNodeUpdate}
+        />
+      </div>
+
+      {showCodeModal && (
+        <CodeModal
+          code={generatedCode}
+          onClose={() => setShowCodeModal(false)}
+        />
+      )}
     </div>
   );
 };
@@ -976,7 +1173,7 @@ interface ToolboxPanelProps {
   onCreateNode: (type: NodeType, position: Position) => void;
 }
 
-const ToolboxPanel: React.FC<ToolboxPanelProps> = ({ onCreateNode: _onCreateNode }) => {
+const ToolboxPanel: React.FC<ToolboxPanelProps> = ({ onCreateNode }) => {
   const componentTypes: Array<{
     type: NodeType;
     label: string;
@@ -995,6 +1192,11 @@ const ToolboxPanel: React.FC<ToolboxPanelProps> = ({ onCreateNode: _onCreateNode
     e.dataTransfer.effectAllowed = 'copy';
   };
 
+  const handleComponentClick = (type: NodeType): void => {
+    // Create node at center of canvas when clicked
+    onCreateNode(type, { x: 400, y: 300 });
+  };
+
   return (
     <div className="left-sidebar">
       <div className="sidebar-section">
@@ -1008,7 +1210,9 @@ const ToolboxPanel: React.FC<ToolboxPanelProps> = ({ onCreateNode: _onCreateNode
               key={type}
               draggable
               onDragStart={(e) => handleDragStart(e, type)}
+              onClick={() => handleComponentClick(type)}
               className={`component-item ${type}`}
+              style={{ cursor: 'pointer' }}
             >
               <div className="component-icon">{icon}</div>
               <div className="component-info">
@@ -1049,9 +1253,10 @@ const VisualizationCanvas: React.FC<VisualizationCanvasProps> = ({
   selectedNode,
   onNodeSelect,
   onNodeCreate,
-  onNodeConnect: _onNodeConnect
+  onNodeConnect
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
 
   // D3.js visualization logic
   useEffect(() => {
@@ -1149,7 +1354,19 @@ const VisualizationCanvas: React.FC<VisualizationCanvasProps> = ({
       .style('cursor', 'pointer')
       .on('click', (event, d) => {
         event.stopPropagation();
-        onNodeSelect(d);
+        
+        if (event.shiftKey && connectingFrom && connectingFrom !== d.id) {
+          // Connect nodes when shift+click on second node
+          onNodeConnect(connectingFrom, d.id);
+          setConnectingFrom(null);
+        } else if (event.shiftKey) {
+          // Start connection mode with shift+click
+          setConnectingFrom(d.id);
+        } else {
+          // Normal selection
+          onNodeSelect(d);
+          setConnectingFrom(null);
+        }
       });
 
     // Add labels

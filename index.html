@@ -86,20 +86,7 @@
 </head>
 <body>
     <!-- Application Root -->
-    <div id="root">
-        <div style="padding: 20px; background: yellow; color: black; font-size: 24px;">
-            <h1>TEST: HTML is loading</h1>
-            <p>If you see this, the HTML file is being served correctly.</p>
-            <p id="js-test">JavaScript not yet executed</p>
-        </div>
-    </div>
-    
-    <!-- Basic JavaScript Test -->
-    <script>
-        console.log('Basic JavaScript is running');
-        document.getElementById('js-test').innerHTML = 'JavaScript is working!';
-        document.getElementById('js-test').style.color = 'green';
-    </script>
+    <div id="root"></div>
     
     <!-- Main Application Script -->
     <script type="module" src="./index.tsx"></script>
