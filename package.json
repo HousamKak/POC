@@ -1,0 +1,147 @@
+{
+  "name": "graph-first-programming-ide",
+  "version": "1.0.0",
+  "description": "A comprehensive IDE for Graph-First Programming with visual architecture design and code generation",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint:fix": "eslint . --ext ts,tsx --fix",
+    "type-check": "tsc --noEmit",
+    "format": "prettier --write ./**/*.{ts,tsx,json,css,md}",
+    "format:check": "prettier --check ./**/*.{ts,tsx,json,css,md}",
+    "start": "npm run dev",
+    "analyze": "npx vite-bundle-analyzer",
+    "clean": "rimraf dist node_modules/.vite",
+    "validate-architecture": "npx tsx scripts/validate-architecture.ts",
+    "generate-docs": "typedoc src --out docs",
+    "electron:dev": "electron .",
+    "electron:build": "electron-builder",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@types/d3": "^7.4.3",
+    "@vitejs/plugin-react": "^4.2.1",
+    "d3": "^7.8.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.1",
+    "zustand": "^4.4.7",
+    "lodash": "^4.17.21",
+    "@types/lodash": "^4.14.202",
+    "uuid": "^9.0.1",
+    "@types/uuid": "^9.0.7",
+    "monaco-editor": "^0.45.0",
+    "@monaco-editor/react": "^4.6.0",
+    "react-split-pane": "^2.0.3",
+    "react-hotkeys-hook": "^4.4.1",
+    "react-dnd": "^16.0.1",
+    "react-dnd-html5-backend": "^16.0.1",
+    "react-virtualized": "^9.22.3",
+    "@types/react-virtualized": "^9.21.29",
+    "file-saver": "^2.0.5",
+    "@types/file-saver": "^2.0.7",
+    "jszip": "^3.10.1",
+    "@types/jszip": "^3.4.1",
+    "yaml": "^2.3.4",
+    "marked": "^11.1.1",
+    "@types/marked": "^6.0.0",
+    "prettier": "^3.1.1",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-jsx-a11y": "^6.8.0",
+    "eslint-config-prettier": "^9.1.0",
+    "vite": "^5.0.8",
+    "vite-plugin-pwa": "^0.17.4",
+    "vitest": "^1.1.0",
+    "@vitest/ui": "^1.1.0",
+    "c8": "^8.0.1",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/jest-dom": "^6.1.6",
+    "@testing-library/user-event": "^14.5.1",
+    "jsdom": "^23.0.1",
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "rimraf": "^5.0.5",
+    "typedoc": "^0.25.4",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "@tauri-apps/cli": "^1.5.8",
+    "@tauri-apps/api": "^1.5.3",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": [
+    "graph-first-programming",
+    "architecture",
+    "ide",
+    "visual-programming",
+    "dependency-injection",
+    "ports-and-adapters",
+    "clean-architecture",
+    "react",
+    "typescript",
+    "d3"
+  ],
+  "author": {
+    "name": "Graph-First Programming Community",
+    "email": "community@graphfirst.dev",
+    "url": "https://graphfirst.dev"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/graph-first/ide.git"
+  },
+  "bugs": {
+    "url": "https://github.com/graph-first/ide/issues"
+  },
+  "homepage": "https://graphfirst.dev",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "@babel/core",
+        "webpack"
+      ]
+    }
+  },
+  "volta": {
+    "node": "20.10.0",
+    "npm": "10.2.3"
+  }
+}
