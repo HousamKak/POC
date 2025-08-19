@@ -1,8 +1,8 @@
 {
   "semi": true,
-  "trailingComma": "none",
+  "trailingComma": "es5",
   "singleQuote": true,
-  "printWidth": 120,
+  "printWidth": 100,
   "tabWidth": 2,
   "useTabs": false,
   "quoteProps": "as-needed",
@@ -11,23 +11,25 @@
   "arrowParens": "avoid",
   "endOfLine": "lf",
   "embeddedLanguageFormatting": "auto",
-  "htmlWhitespaceSensitivity": "css",
-  "insertPragma": false,
-  "jsxSingleQuote": true,
-  "proseWrap": "preserve",
-  "requirePragma": false,
   "overrides": [
     {
       "files": "*.json",
       "options": {
-        "printWidth": 80
+        "parser": "json"
       }
     },
     {
       "files": "*.md",
       "options": {
+        "parser": "markdown",
         "printWidth": 80,
         "proseWrap": "always"
+      }
+    },
+    {
+      "files": "*.yml",
+      "options": {
+        "tabWidth": 2
       }
     }
   ]

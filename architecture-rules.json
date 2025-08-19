@@ -1,0 +1,129 @@
+{
+  "version": "1.0.0",
+  "description": "Graph-First Programming Architecture Rules",
+  "rules": {
+    "layerSeparation": {
+      "domain": [],
+      "application": ["domain"],
+      "infrastructure": ["domain"],
+      "interface": ["application", "domain"]
+    },
+    "portNaming": ".*Port$",
+    "adapterNaming": ".*Adapter$",
+    "useCaseNaming": ".*UseCase$",
+    "controllerNaming": ".*Controller$",
+    "entityNaming": ".*Entity$|.*ValueObject$",
+    "allowedDependencies": {
+      "ports": ["entities", "value-objects"],
+      "adapters": ["ports", "entities", "external-libraries"],
+      "usecases": ["ports", "entities"],
+      "controllers": ["usecases", "ports"],
+      "entities": []
+    },
+    "forbiddenPatterns": [
+      {
+        "pattern": "new .*Adapter\\(",
+        "message": "Direct adapter instantiation not allowed. Use dependency injection.",
+        "severity": "error"
+      },
+      {
+        "pattern": "import.*from.*adapter",
+        "message": "Direct adapter imports not allowed. Import ports instead.",
+        "severity": "error"
+      },
+      {
+        "pattern": "localStorage\\.|sessionStorage\\.",
+        "message": "Direct browser storage access not allowed. Use storage port.",
+        "severity": "warning"
+      },
+      {
+        "pattern": "fetch\\(|axios\\.|http\\.",
+        "message": "Direct HTTP calls not allowed. Use HTTP port.",
+        "severity": "warning"
+      }
+    ]
+  },
+  "violations": {
+    "circular-dependency": "error",
+    "layer-violation": "error",
+    "naming-convention": "warning",
+    "port-implementation": "error",
+    "direct-adapter-usage": "error",
+    "mixed-concerns": "warning",
+    "missing-interface": "warning"
+  },
+  "exceptions": {
+    "files": [
+      "index.tsx",
+      "App.tsx",
+      "main.tsx",
+      "*.config.*",
+      "*.test.*",
+      "*.spec.*",
+      "*.stories.*"
+    ],
+    "directories": [
+      "scripts/",
+      "docs/",
+      "storybook/",
+      "__tests__/",
+      "spec/"
+    ]
+  },
+  "metrics": {
+    "maxDependenciesPerClass": 7,
+    "maxComplexityScore": 3.0,
+    "maxCyclomaticComplexity": 10,
+    "maxLayerDepth": 4,
+    "warningThresholds": {
+      "dependencyCount": 5,
+      "complexityScore": 2.5,
+      "cyclomaticComplexity": 8,
+      "layerDepth": 3
+    }
+  },
+  "codeGeneration": {
+    "templates": {
+      "port": {
+        "typescript": "export interface {{name}}Port {\n  // Port methods\n}",
+        "python": "from abc import ABC, abstractmethod\n\nclass {{name}}Port(ABC):\n    pass"
+      },
+      "adapter": {
+        "typescript": "export class {{name}}Adapter implements {{port}}Port {\n  // Implementation\n}",
+        "python": "class {{name}}Adapter({{port}}Port):\n    pass"
+      },
+      "usecase": {
+        "typescript": "export class {{name}}UseCase {\n  constructor({{dependencies}}) {}\n  \n  async execute(): Promise<void> {\n    // Use case logic\n  }\n}",
+        "python": "class {{name}}UseCase:\n    def __init__(self{{dependencies}}):\n        pass\n    \n    async def execute(self) -> None:\n        pass"
+      }
+    },
+    "conventions": {
+      "fileNaming": "kebab-case",
+      "classNaming": "PascalCase",
+      "interfaceNaming": "PascalCase",
+      "methodNaming": "camelCase",
+      "variableNaming": "camelCase",
+      "constantNaming": "UPPER_SNAKE_CASE"
+    }
+  },
+  "testing": {
+    "required": {
+      "unitTests": ["ports", "usecases", "entities"],
+      "integrationTests": ["adapters"],
+      "contractTests": ["adapters"]
+    },
+    "coverage": {
+      "minimum": 80,
+      "target": 95,
+      "excludePatterns": ["*.config.*", "*.test.*", "*.spec.*"]
+    }
+  },
+  "documentation": {
+    "required": {
+      "ports": "Document all public methods with JSDoc/docstrings",
+      "usecases": "Document business logic and dependencies",
+      "adapters": "Document implementation details and external dependencies"
+    },
+    "formats": ["jsdoc", "markdown", "typescript-docs"]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    // For composite projects that need declarations, emit must be enabled.
+    // Declarations useful for tooling around config scripts.
+    "declaration": true,
+    "declarationMap": true,
+    "types": ["node"]
+  },
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts", 
+    "tailwind.config.js",
+    "postcss.config.js",
+    "scripts/**/*"
+  ]
+}
